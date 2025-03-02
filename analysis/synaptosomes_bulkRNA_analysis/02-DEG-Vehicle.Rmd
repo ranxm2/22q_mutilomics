@@ -1,0 +1,156 @@
+---
+title: "Differential Expression Analysis for bulk RNA-seq data"
+subtitle: "Vehicle contition: 22q vs Control"
+author: "Ximing Ran"
+date: "2025-02-28"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: false
+  html_document:
+    # code_folding: hide
+    toc: true
+    toc_float: true
+hitheme: tomorrow
+highlighter: highlight.js
+
+---
+
+```{r setup, include=FALSE}
+# load libraries
+library(tidyverse)
+library(knitr)
+set.seed(2024)
+
+knitr::opts_chunk$set(
+  # echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 9,
+  fig.height = 4,
+  fig.path = "../results/01-QC/"
+)
+
+theme_set(theme_bw() + theme(legend.position = "bottom"))
+knitr::kable(head(mtcars[, 1:4]), "simple")
+```
+
+```{r}
+library(tibble)
+library(tidyr)
+library(dplyr)
+library(rtracklayer)
+```
+
+
+
+```{r local_function_load}
+# load function from local files
+source(here::here("source", "DEG_functions.R"))
+```
+
+# 1. Read the count data
+In this section, we will read the clean count data from the synaptosomes_bulkRNA folder.  We will read the data and merge them into a single table. The final table will be stored in `results/02-DEG-Vehicle/synaptosomes_bulkRNA_counts_clean.csv`.
+
+```{r load_bulkRNA_data}
+input_count <- read.csv(here::here("data", "synaptosomes_bulkRNA",
+                                      "synaptosomes_bulkRNA_counts_cleaned.csv"))
+counts <-  as.data.frame(input_count) %>% 
+  column_to_rownames(var = "gene")
+colnames(counts) <- gsub("_", "-", colnames(counts))
+
+# sort the columns by the colname
+condition_list <- data.frame(
+  group = c(rep("CTRL_Vehicle", 10),
+            rep("22q_Vehicle", 10),
+            rep("CTRL_TTX", 10),
+            rep("22q_TTX", 10))
+)
+
+row.names(condition_list) <- c(
+  paste0("V", rep(1:10, each = 2), "-", 1:2),
+  paste0("T", rep(1:10, each = 2), "-", 1:2)
+)
+
+counts<- counts[, rownames(condition_list)]
+
+# load the 22q gene_list
+target_22q_gene <- read.csv(here::here("data","ref" ,"22q_gene_2024_10_17.csv"))
+target_gene <- target_22q_gene$gene
+target_gene <- target_gene[1:(length(target_gene) - 4)]
+
+
+```
+
+
+# 2. Differential expression analysis
+
+In this section, we will perform differential expression analysis using DESeq2. We will compare the 22q vs Control in the vehicle condition. The results will be stored in `results/02-DEG-Vehicle/DESeq2_results.csv`.
+
+```{r DESeq2_analysis}
+# Init the result folder structure for the result
+result_folder = here::here("results", "02-DEG-Vehicle")
+Result_folder_structure(result_folder)
+
+# load the comparison group information
+reference_group <- "CTRL_Vehicle"
+compare_group <- "22q_Vehicle"
+
+filter_sample_info <- condition_list %>% 
+  filter(group %in% c(reference_group, compare_group))
+filter_counts <- counts[, rownames(filter_sample_info)]
+
+
+# Run the DESeq2 analysis
+dds_obj <- DEAnalysis(counts =filter_counts, 
+                       reference_group = reference_group,
+                       compare_group = compare_group,
+                       condition_list = filter_sample_info,
+                       target_gene = target_gene,
+                       result_folder = result_folder)
+
+# Plot the sample distance 
+plot_sample_heatmap(dds_obj, figure_folder =
+                    file.path(result_folder,"01-Sample_info"),
+                    file_name = "01_sample_distance_heatmap")
+
+# Plot the PCA plot for the sample
+plot_sample_PCA_plot(dds_obj,figure_folder = file.path(result_folder,"01-Sample_info"),
+                   file_name = "02_sample_PCA_plot",
+                   reference_group, compare_group)
+
+
+
+result_df <- results(dds_obj)
+result_df <- as.data.frame(result_df)
+
+# Plot the volcano plot for the DEG
+
+plot_volcano_plot(result_df, 
+                  figure_folder = file.path(result_folder,"02-DEG"),
+                  file_name = "02_volcano_plot_log2fc_1",
+                  thread = 1 ,
+                  label_gene = NULL)
+
+plot_volcano_plot(result_df, 
+                  figure_folder = file.path(result_folder,"02-DEG"),
+                  file_name = "03_volcano_plot_log2fc_1.5",
+                  thread = 1.5 ,
+                  label_gene = NULL)
+
+
+
+
+```
+
+
+
+
+
+\newpage
+# Session information
+```{r}
+sessionInfo()
+```
+
