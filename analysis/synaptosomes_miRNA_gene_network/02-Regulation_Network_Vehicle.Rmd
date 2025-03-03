@@ -1,0 +1,547 @@
+---
+title: "miRNA & mRNA regulation network"
+subtitle: "Vehicle contition: 22q vs Control"
+author: "Ximing Ran"
+date: "2025-03-02"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: false
+  html_document:
+    # code_folding: hide
+    toc: true
+    toc_float: true
+hitheme: tomorrow
+highlighter: highlight.js
+
+---
+
+```{r setup, include=FALSE}
+# load libraries
+library(tidyverse)
+library(knitr)
+set.seed(2024)
+
+knitr::opts_chunk$set(
+  # echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.path = "./results/02-Regularion_Network/figures/",
+)
+
+theme_set(theme_bw() + theme(legend.position = "bottom"))
+knitr::kable(head(mtcars[, 1:4]), "simple")
+```
+
+```{r}
+library(tibble)
+library(tidyr)
+library(dplyr)
+library(rtracklayer)
+```
+
+
+
+```{r local_function_load}
+# load function from local files
+source(here::here("source", "DEG_functions.R"))
+
+```
+
+\newpage
+
+# 1. Read the DEG and DEM from the previous analysis
+
+```{r}
+DEG <- read.csv(here::here("analysis", "synaptosomes_bulkRNA_analysis", "results", "02-DEG-Vehicle", "02-DEG", "01_all_gene_results.csv"), row.names = 1)
+DEG <- DEG %>% filter(padj < 0.05 & abs(log2FoldChange) > 1)
+DEG$sign <- ifelse(DEG$log2FoldChange > 0, "up", "down")
+DEG$gene <- rownames(DEG)
+DEG$gene_log2FC <- DEG$log2FoldChange
+print("DEG label")
+print(table(DEG$sign))
+  
+  
+DEM <- read.csv(here::here("analysis", "synaptosomes_miRNA_anlaysis", "results", "01-DEM-Vehicle", "02-DEG", "01_all_gene_results.csv"), row.names = 1)
+DEM <- DEM %>% filter(padj < 0.05 & abs(log2FoldChange) > 1)
+rownames(DEM) <- clean_miRNA(rownames(DEM))
+DEM$miRNA <- rownames(DEM)
+DEM$miRNA_log2FC <- DEM$log2FoldChange
+DEM$sign <- ifelse(DEM$log2FoldChange > 0, "up", "down")
+print("DEM label")
+print(table(DEM$sign))
+
+```
+
+# 2. Load the ENCORI miRNA-target interaction data
+
+
+```{r}
+# Set the path to the downloaded file
+file_path <- here::here("data", "ref", "ENCORI_hg38_CLIP-seq_all_miRNA.txt")
+
+# Load the data, skipping the initial lines to start from the correct header row
+ref_ENCORI <- read.table(file_path, header = TRUE, sep = "\t", 
+                         stringsAsFactors = FALSE, skip = 3, fill = TRUE)
+dim(ref_ENCORI)
+colnames(ref_ENCORI)[2] <- "miRNA"
+ref_ENCORI$miRNA <- clean_miRNA(ref_ENCORI$miRNA)
+colnames(ref_ENCORI)[4] <- "gene"
+
+# max(ref_ENCORI[, 15:21], na.rm = TRUE)
+
+# Convert values > 0 to 1 in selected columns (15 to 21)
+ref_ENCORI[, 15:21] <- ref_ENCORI[, 15:21] %>% mutate(across(everything(), ~ ifelse(. > 0, 1, 0)))
+
+# # Check the result
+# max(ref_ENCORI[, 15:21], na.rm = TRUE)
+```
+
+
+# 3. Build newtork for miRNA and mRNA
+
+```{r}
+network_data <- ref_ENCORI %>% 
+  filter(miRNA %in% rownames(DEM)) %>% 
+  filter(gene %in% rownames(DEG)) %>% 
+  select(miRNA, gene, everything())
+
+
+network_data <- network_data %>%
+  # Join with DEM and DEG to get logFC values
+  left_join(DEM %>% select(miRNA, miRNA_log2FC), by = "miRNA") %>%
+  left_join(DEG %>% select(gene, gene_log2FC), by = "gene") %>%
+  
+  # Compute correlation sum
+  mutate(correlation = PITA + RNA22 + miRmap + microT + miRanda + PicTar + TargetScan) %>%
+  
+  # Select relevant columns
+  select(miRNA, gene, correlation, miRNA_log2FC, gene_log2FC) %>%
+  
+  # Filter for negative correlations
+  filter(miRNA_log2FC * gene_log2FC < 0) %>%
+  
+  # Keep only one row per (miRNA, gene) with highest correlation
+  group_by(miRNA, gene) %>%
+  slice_max(order_by = correlation, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+
+
+```
+
+# 4. Plot the network
+
+```{r plot for newtork, fig.width=11, fig.height=8}
+enrichment_up <- read.csv(here::here("analysis", "synaptosomes_bulkRNA_analysis", "results", "02-DEG-Vehicle", "03-Enrichment", "01-DEG_1.0_up.csv"))
+
+path_name <- "immune system process"
+gene_list <- enrichment_up %>%
+              filter(term_name ==path_name ) %>%
+              pull(intersection_gene) %>%
+              unlist() %>%
+              strsplit(split = ",") %>%
+              unlist()
+
+gene_list_filter <- gene_list[!grepl("TBX1", gene_list)]
+
+result_folder <- "results/02-Regulation_Vehicle/Up_pathways"
+file_name <- "immune_system_process"
+
+plot_network_circle_blue(network_data, path_name, gene_list_filter,
+                         result_folder, file_name)
+
+
+
+
+enrichment_down <- read.csv(here::here("analysis", "synaptosomes_bulkRNA_analysis", "results", "02-DEG-Vehicle", "03-Enrichment", "01-DEG_1.0_down.csv"))
+
+path_name <- "chemical synaptic transmission"
+gene_list <- enrichment_down %>%
+              filter(term_name ==path_name ) %>%
+              pull(intersection_gene) %>%
+              unlist() %>%
+              strsplit(split = ",") %>%
+              unlist()
+
+
+result_folder <- "results/02-Regulation_Vehicle/Down_pathways"
+file_name <- "chemical_synaptic_transmission"
+plot_network_circle_blue(network_data, path_name, gene_list,
+                         result_folder, file_name)
+
+```
+
+# 5. Plot the leaf network
+
+
+
+```{r}
+
+# for miRNA down, but gene is up, up enrichemtn
+down_path_way_sel <- c("chemical synaptic transmission",
+                       "trans-synaptic signaling",
+                       "synaptic transmission, glutamatergic",
+                       "regulation of neuronal synaptic plasticity",
+                       "postsynaptic density",
+                       "Neuroactive ligand-receptor interaction",
+                       "nervous system development",
+                       "neurogenesis")
+
+
+miRNA_name = miRNA_list_DEM_up[1]     
+
+for (miRNA_name in miRNA_list_DEM_up ){
+  print(miRNA_name)
+  pairs_sub <- network_data  %>% filter(miRNA == miRNA_name)
+  gene_list <- pairs_sub$gene
+  
+  # remove TBX1 
+  gene_list <- gene_list[!grepl("TBX1", gene_list)]
+  
+  enrich_result <- tibble()
+  for (pathway in down_path_way_sel ){
+    print(pathway)
+    enrichment_sub <- enrichment_down %>% filter(term_name == pathway)  %>% 
+      dplyr::select(term_name, source,p_value, intersection_gene)
+    enrichment_sub_long <- enrichment_sub %>%
+      separate_rows(intersection_gene, sep = ",") %>%
+      mutate(gene = intersection_gene) %>%
+      filter(gene %in% gene_list)
+    
+    enrich_result <- rbind(enrich_result, enrichment_sub_long)
+  }
+  
+  enrich_result<- enrich_result %>%
+    left_join(
+      DEG %>%
+        dplyr::select(gene, gene_log2FC, padj),
+      by = "gene"
+    )
+  
+  # sace the result to csv
+  # write.csv(enrich_result, file.path("result","pathway-miRNA","data", paste0(miRNA_name,"_up_enrichment_GO_BP.csv")), row.names = FALSE)
+  
+  
+  # Step 1: Assign pathway indices and prepend them to the pathway names
+  unique_pathways <- enrich_result %>%
+    distinct(term_name) %>%
+    mutate(pathway_suffix = paste0("M", row_number()) )  # Prepend suffix to pathway name
+  
+  # Step 2: Add the suffix to gene names based on the updated pathway names
+  enrich_result <- enrich_result %>%
+    left_join(unique_pathways, by = "term_name") %>%
+    mutate(gene = paste0(gene, "_", pathway_suffix),
+           term_name = paste0( pathway_suffix, " " ,term_name )) %>%
+    select(-pathway_suffix)  # Remove helper column if no longer needed
+  
+  
+  # Edges from source to term_name
+  edges_source_to_term <- enrich_result %>%
+    select( to = term_name) %>%
+    distinct() %>%
+    mutate(from = "origin") # Add `origin` as the `from` node
+  #reorder the columns
+  edges_source_to_term <- edges_source_to_term[,c(2,1)]
+  
+  # 
+  # # Create edges from origin to source
+  # edges_origin_to_source <- edges_source_to_term %>%
+  #   select(from = from) %>% # Select only the unique sources
+  #   distinct() %>%          # Remove duplicates
+  #   mutate(to = from,       # Shift source to `to`
+  #          from = "origin") # Add `origin` as the `from` node
+  
+  # Edges from term_name to gene
+  edges_term_to_gene <- enrich_result %>%
+    select(from = term_name, to = gene)
+  
+  # Combine both edge lists
+  # Combine edges
+  edges <- bind_rows(
+    # edges_origin_to_source, # origin to source
+    edges_source_to_term,   # source to term_name
+    edges_term_to_gene      # term_name to gene
+  )
+  
+  
+  vertices_origin <- tibble(
+    name = "origin",
+    value = 1,
+    group = NA,
+    id = NA,
+  )
+  
+  # vertices_source <- enrich_result %>%
+  #   distinct(source, source) %>%
+  #   mutate(value = 1, group = "origin", id = NA) %>%
+  #   select(name = source, value, group, id)
+  # 
+  vertices_gene <- enrich_result %>%
+    select(name = gene, value = gene_log2FC,group = term_name ) %>% 
+    mutate(id = 1:nrow(.))
+  
+  vertices_pathway <- enrich_result %>%
+    distinct(term_name, source, p_value) %>%  # Ensure unique pathways
+    mutate(value = -log10(p_value), group = "origin", id =NA) %>%  # Calculate -log10(p_value)
+    select(name = term_name, value, group, id) 
+  
+  
+  # Combine all vertices
+  vertices <- bind_rows(vertices_origin,  
+                        # vertices_source, 
+                        vertices_pathway, 
+                        vertices_gene)
+  
+  #Let's add information concerning the label we are going to add: angle, horizontal adjustement and potential flip
+  #calculate the ANGLE of the labels
+  vertices$id=NA
+  myleaves=which(is.na( match(vertices$name, edges$from) ))
+  nleaves=length(myleaves)
+  vertices$id[ myleaves ] = seq(1:nleaves)
+  # Correct angle calculation for circular layout
+  vertices$angle <- 90 - 360 * (vertices$id / nleaves)
+  
+  vertices$hjust<-ifelse( vertices$angle < -90, 1, 0)
+  
+  # flip angle BY to make them readable
+  vertices$angle<-ifelse(vertices$angle < -90, vertices$angle+180, vertices$angle)
+  
+  # print(vertices, n=125)
+  
+  
+  vertices <- vertices %>%
+    group_by(name) %>%
+    mutate(name = ifelse(duplicated(name), paste0(name, "_", row_number()), name)) %>%
+    ungroup()
+  # Create a graph object
+  mygraph <- graph_from_data_frame( edges, vertices=vertices )
+
+  
+p <- ggraph(mygraph, layout = 'dendrogram', circular = TRUE) + 
+    geom_edge_diagonal(colour="grey") +
+
+    # Apply the correct palette
+scale_color_d3(palette = "category10") + 
+  
+    geom_node_text(aes(x = x*1.15, y=y*1.15, filter = leaf, label=name, angle = angle, hjust=hjust, colour=group), 
+                   size=2.7, alpha=10) +
+    geom_node_point(aes(filter = leaf, x = x*1.07, y=y*1.07, colour=group, size=value)) +
+    scale_size_continuous(range = c(0.1, 5), trans = "reverse") +
+    theme_void() +
+    theme(
+      # plot.margin = unit(c(1, 1, 1, 1), "cm"),  # Increase right margin for legend
+      legend.position = "right",  # Place legend on the right
+      legend.justification = c(0.5, 0.5),  # Center legend vertically
+      legend.box = "vertical",  # Stack legend items
+      plot.title = element_text(hjust = 0.5, size = 14, face = "bold")  # Center title with larger font
+    ) +
+    expand_limits(x = c(-2, 2), y = c(-2, 2)) +  # Adjust for better spacing
+    ggtitle(paste0(miRNA_name)) +
+    guides(
+      alpha = "none",  # Hide the alpha legend
+      colour = guide_legend(order = 1, override.aes = list(size = 3)),  # Keep color legend first
+      size = guide_legend(order = 2)  # Place size legend second
+    )
+
+p
+  
+  ggsave(file.path("results", "03-leaves",  paste0("Pathway_plot",miRNA_name,"_up_enrichment.pdf")),
+         p, width = 8, height = 6)
+  ggsave(file.path("results", "03-leaves",  paste0("Pathway_plot",miRNA_name,"_up_enrichment.png")),
+         p, width = 8, height = 6, dpi = 300)
+  
+  
+}
+
+
+
+
+# for miRNA down, but gene is up, up enrichemtn
+up_path_way_sel <- c("immune system process",
+                     "cytokine production",
+                     "response to cytokine",
+                     "PI3K-Akt signaling pathway", 
+                     "regulation of MAPK cascade",
+                     "nervous system development",
+                     "regulation of RNA metabolic process")
+
+
+miRNA_list_DEM_down <- c("hsa-miR-128-3p","hsa-miR-185-5p")
+miRNA_name = miRNA_list_DEM_down[1]     
+
+
+for (miRNA_name in miRNA_list_DEM_down ){
+  print(miRNA_name)
+  pairs_sub <- network_data  %>% filter(miRNA == miRNA_name)
+  gene_list <- pairs_sub$gene
+  
+  # remove TBX1 
+  gene_list <- gene_list[!grepl("TBX1", gene_list)]
+  
+  enrich_result <- tibble()
+  for (pathway in up_path_way_sel ){
+    print(pathway)
+    enrichment_sub <- enrichment_up%>% filter(term_name == pathway)  %>% 
+      dplyr::select(term_name, source,p_value, intersection_gene)
+    enrichment_sub_long <- enrichment_sub %>%
+      separate_rows(intersection_gene, sep = ",") %>%
+      mutate(gene = intersection_gene) %>%
+      filter(gene %in% gene_list)
+    
+    enrich_result <- rbind(enrich_result, enrichment_sub_long)
+  }
+  
+  enrich_result<- enrich_result %>%
+    left_join(
+      DEG %>%
+        dplyr::select(gene, gene_log2FC, padj),
+      by = "gene"
+    )
+  
+  # sace the result to csv
+  # write.csv(enrich_result, file.path("result","pathway-miRNA","data", paste0(miRNA_name,"_up_enrichment_GO_BP.csv")), row.names = FALSE)
+  
+  
+  # Step 1: Assign pathway indices and prepend them to the pathway names
+  unique_pathways <- enrich_result %>%
+    distinct(term_name) %>%
+    mutate(pathway_suffix = paste0("M", row_number()) )  # Prepend suffix to pathway name
+  
+  # Step 2: Add the suffix to gene names based on the updated pathway names
+  enrich_result <- enrich_result %>%
+    left_join(unique_pathways, by = "term_name") %>%
+    mutate(gene = paste0(gene, "_", pathway_suffix),
+           term_name = paste0( pathway_suffix, " " ,term_name )) %>%
+    select(-pathway_suffix)  # Remove helper column if no longer needed
+  
+  
+  # Edges from source to term_name
+  edges_source_to_term <- enrich_result %>%
+    select( to = term_name) %>%
+    distinct() %>%
+    mutate(from = "origin") # Add `origin` as the `from` node
+  #reorder the columns
+  edges_source_to_term <- edges_source_to_term[,c(2,1)]
+  
+  # 
+  # # Create edges from origin to source
+  # edges_origin_to_source <- edges_source_to_term %>%
+  #   select(from = from) %>% # Select only the unique sources
+  #   distinct() %>%          # Remove duplicates
+  #   mutate(to = from,       # Shift source to `to`
+  #          from = "origin") # Add `origin` as the `from` node
+  
+  # Edges from term_name to gene
+  edges_term_to_gene <- enrich_result %>%
+    select(from = term_name, to = gene)
+  
+  # Combine both edge lists
+  # Combine edges
+  edges <- bind_rows(
+    # edges_origin_to_source, # origin to source
+    edges_source_to_term,   # source to term_name
+    edges_term_to_gene      # term_name to gene
+  )
+  
+  
+  vertices_origin <- tibble(
+    name = "origin",
+    value = 1,
+    group = NA,
+    id = NA,
+  )
+  
+  # vertices_source <- enrich_result %>%
+  #   distinct(source, source) %>%
+  #   mutate(value = 1, group = "origin", id = NA) %>%
+  #   select(name = source, value, group, id)
+  # 
+  vertices_gene <- enrich_result %>%
+    select(name = gene, value = gene_log2FC,group = term_name ) %>% 
+    mutate(id = 1:nrow(.))
+  
+  vertices_pathway <- enrich_result %>%
+    distinct(term_name, source, p_value) %>%  # Ensure unique pathways
+    mutate(value = -log10(p_value), group = "origin", id =NA) %>%  # Calculate -log10(p_value)
+    select(name = term_name, value, group, id) 
+  
+  
+  # Combine all vertices
+  vertices <- bind_rows(vertices_origin,  
+                        # vertices_source, 
+                        vertices_pathway, 
+                        vertices_gene)
+  
+  #Let's add information concerning the label we are going to add: angle, horizontal adjustement and potential flip
+  #calculate the ANGLE of the labels
+  vertices$id=NA
+  myleaves=which(is.na( match(vertices$name, edges$from) ))
+  nleaves=length(myleaves)
+  vertices$id[ myleaves ] = seq(1:nleaves)
+  # Correct angle calculation for circular layout
+  vertices$angle <- 90 - 360 * (vertices$id / nleaves)
+  
+  vertices$hjust<-ifelse( vertices$angle < -90, 1, 0)
+  
+  # flip angle BY to make them readable
+  vertices$angle<-ifelse(vertices$angle < -90, vertices$angle+180, vertices$angle)
+  
+  # print(vertices, n=125)
+  
+  
+  vertices <- vertices %>%
+    group_by(name) %>%
+    mutate(name = ifelse(duplicated(name), paste0(name, "_", row_number()), name)) %>%
+    ungroup()
+  # Create a graph object
+  mygraph <- graph_from_data_frame( edges, vertices=vertices )
+
+  
+p <- ggraph(mygraph, layout = 'dendrogram', circular = TRUE) + 
+    geom_edge_diagonal(colour="grey") +
+
+    # Apply the correct palette
+scale_color_d3(palette = "category10") + 
+  
+    geom_node_text(aes(x = x*1.15, y=y*1.15, filter = leaf, label=name, angle = angle, hjust=hjust, colour=group), 
+                   size=2.7, alpha=10) +
+    geom_node_point(aes(filter = leaf, x = x*1.07, y=y*1.07, colour=group, size=value)) +
+    scale_size_continuous(range = c(0.1, 5)) +
+    theme_void() +
+    theme(
+      # plot.margin = unit(c(1, 1, 1, 1), "cm"),  # Increase right margin for legend
+      legend.position = "right",  # Place legend on the right
+      legend.justification = c(0.5, 0.5),  # Center legend vertically
+      legend.box = "vertical",  # Stack legend items
+      plot.title = element_text(hjust = 0.5, size = 14, face = "bold")  # Center title with larger font
+    ) +
+    expand_limits(x = c(-2, 2), y = c(-2, 2)) +  # Adjust for better spacing
+    ggtitle(paste0(miRNA_name)) +
+    guides(
+      alpha = "none",  # Hide the alpha legend
+      colour = guide_legend(order = 1, override.aes = list(size = 3)),  # Keep color legend first
+      size = guide_legend(order = 2)  # Place size legend second
+    )
+
+p
+  
+  ggsave(file.path("results", "03-leaves",  paste0("Pathway_plot",miRNA_name,"_down_enrichment.pdf")),
+         p, width = 12, height = 10)
+  ggsave(file.path("results", "03-leaves",  paste0("Pathway_plot",miRNA_name,"_down_enrichment.png")),
+         p, width = 12, height = 10, dpi = 300)
+  
+  
+}
+
+
+
+
+```
+
+# Session information
+```{r}
+sessionInfo()
+```
+

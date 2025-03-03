@@ -39,7 +39,7 @@ Result_folder_structure <- function(result_folder) {
   dir.create(paste0(result_folder, "/01-Sample_info"), showWarnings = FALSE)
   dir.create(paste0(result_folder, "/02-DEG"), showWarnings = FALSE)
   dir.create(paste0(result_folder, "/03-Enrichment"), showWarnings = FALSE)
-  dir.create(paste0(result_folder, "/04-GSEA"), showWarnings = FALSE)
+  dir.create(paste0(result_folder, "/04-GSVA"), showWarnings = FALSE)
   dir.create(paste0(result_folder, "/05-22q_Gene"), showWarnings = FALSE)
 }
 
@@ -76,27 +76,6 @@ DEAnalysis <- function(counts =NULL,
   ###------------------------###
   
   dds <- DESeq(dds)
-  res <- results(dds)
-  resOrdered <- res[order(res$padj), ]
-  
-  # omit the NA values
-  resOrdered <- resOrdered[!is.na(resOrdered$padj),]
-  dds <- dds[rownames(resOrdered),]
-  write.csv(resOrdered, file.path(result_folder,"02-DEG", "01_all_gene_results.csv"))
-  
-  # Filter the DEG with padj < 0.05 and log2FoldChange > 1
-  dem_1 <- resOrdered %>% as.data.frame() %>% rownames_to_column(var = "gene") %>% 
-    filter(padj < 0.05 & abs(log2FoldChange) > 1) %>% arrange(padj)
-  dem_1 <- dem_1[!is.na(dem_1$padj),]
-  write.csv(dem_1, file.path(result_folder,"02-DEG","02_DEG_log2fc_1.csv"), row.names = FALSE)
-  
-  # 
-  dem_1_5 <- resOrdered %>% as.data.frame() %>% rownames_to_column(var = "gene") %>% 
-    filter(padj < 0.05 & abs(log2FoldChange) > 1.5) %>% arrange(padj)
-  dem_1_5 <- dem_1_5[!is.na(dem_1_5$padj),]
-  write.csv(dem_1_5, file.path(result_folder,"02-DEG","03_DEG_log2fc_1_5.csv"), row.names = FALSE)
-  print("DEG analysis is done")
-
   return(dds)
 }
 
@@ -207,8 +186,10 @@ plot_volcano_plot <- function(result_df, figure_folder, file_name, thread = 1, d
     # Auto-annotations with dynamic colors
     geom_label_repel(data = label_df, 
                      aes(label = GeneName, color = diffexpressed), 
-                     size = 4, 
-                     max.overlaps = 50, 
+                     size = 5, 
+                     max.overlaps =50,
+                     min.segment.length = 0,
+                     force = 2,
                      show.legend = FALSE, 
                      box.padding = 0.5, 
                      point.padding = 0.3) +
@@ -220,9 +201,9 @@ plot_volcano_plot <- function(result_df, figure_folder, file_name, thread = 1, d
     )
   
   ggsave(file.path(figure_folder, paste0(file_name, ".png")),
-         p, width = 8, height = 8, units = "in", dpi = 300)
+         p, width = 6, height = 6, units = "in", dpi = 300)
   ggsave(file.path(figure_folder, paste0(file_name, ".pdf")),
-         p, width = 8, height = 8, units = "in")
+         p, width = 6, height = 6, units = "in")
   print(sprintf("Volcano plot for %s", file_name))
   print(p)
 }

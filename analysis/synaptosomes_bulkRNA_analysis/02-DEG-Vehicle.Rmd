@@ -60,18 +60,26 @@ counts <-  as.data.frame(input_count) %>%
   column_to_rownames(var = "gene")
 colnames(counts) <- gsub("_", "-", colnames(counts))
 
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "synaptosomes_bulkRNA",
+                                      "sample_info_22q.csv")) %>%
+                    mutate(condition = paste0(Diagosis, "_", Treatment))
+
+
+# Ensure the column names of counts exist in Sample.name
+new_colnames <- sample_list_raw$Label[match(colnames(counts), sample_list_raw$Sample.name)]
+
+# Assign new column names
+colnames(counts) <- new_colnames
+
+
 # sort the columns by the colname
 condition_list <- data.frame(
-  group = c(rep("CTRL_Vehicle", 10),
-            rep("22q_Vehicle", 10),
-            rep("CTRL_TTX", 10),
-            rep("22q_TTX", 10))
+  group =sample_list_raw$condition
 )
 
-row.names(condition_list) <- c(
-  paste0("V", rep(1:10, each = 2), "-", 1:2),
-  paste0("T", rep(1:10, each = 2), "-", 1:2)
-)
+row.names(condition_list) <- sample_list_raw$Label
 
 counts<- counts[, rownames(condition_list)]
 
@@ -81,6 +89,10 @@ target_gene <- target_22q_gene$gene
 target_gene <- target_gene[1:(length(target_gene) - 4)]
 
 gene_name_mapping<- readRDS(here::here("data","ref" ,"gene_name_mapping.rds"))
+
+
+
+
 ```
 
 
@@ -108,6 +120,33 @@ dds_obj <- DEAnalysis(counts =filter_counts,
                        condition_list = filter_sample_info,
                        target_gene = target_gene,
                        result_folder = result_folder)
+
+
+res <- results(dds_obj)
+resOrdered <- res[order(res$padj), ]
+
+# omit the NA values
+resOrdered <- resOrdered[!is.na(resOrdered$padj),]
+dds_obj <- dds_obj[rownames(resOrdered),]
+write.csv(resOrdered, file.path(result_folder,"02-DEG", "01_all_gene_results.csv"))
+
+# DEG with log2fc > 1 and padj < 0.05
+deg_1 <- resOrdered %>% as.data.frame() %>% rownames_to_column(var = "gene") %>% 
+  filter(padj < 0.05 & abs(log2FoldChange) > 1) %>% arrange(padj)
+deg_1 <- deg_1[!is.na(deg_1$padj),]
+write.csv(deg_1, file.path(result_folder,"02-DEG","02_DEG_log2fc_1.csv"), row.names = FALSE)
+
+# DEG with log2fc > 1.5 and padj < 0.05
+deg_1.5 <- resOrdered %>% as.data.frame() %>% rownames_to_column(var = "gene") %>% 
+  filter(padj < 0.05 & abs(log2FoldChange) > 1.5) %>% arrange(padj)
+deg_1.5  <- deg_1.5 [!is.na(deg_1.5 $padj),]
+write.csv(deg_1.5 , file.path(result_folder,"02-DEG","03_DEG_log2fc_1_5.csv"), row.names = FALSE)
+print("DEG analysis is done")
+  
+# Save the normalized counts
+normalized_counts <- counts(dds_obj, normalized = TRUE)
+write.csv(normalized_counts, file.path(result_folder,"02-DEG", "DESeq2_normalized_counts.csv"))
+
 ```
 
 
@@ -135,7 +174,7 @@ plot_sample_PCA_plot(dds_obj,figure_folder = file.path(result_folder,"01-Sample_
 
 ## (2) DEG visualization - Volcano plot and Heatmap
 
-```{r volcano_DEG, fig.width=8, fig.height=8}
+```{r volcano_DEG, fig.width=6, fig.height=6}
 result_df <- results(dds_obj) %>%
   as.data.frame() %>%
   rownames_to_column(var = "GeneName") %>%
@@ -147,7 +186,7 @@ result_df <- results(dds_obj) %>%
 plot_volcano_plot(result_df, 
                   figure_folder = file.path(result_folder,"02-DEG"),
                   file_name = "02_volcano_plot_log2fc_1",
-                  thread = 1 , label_gene = NULL)
+                  thread = 1 , dot_size =2, label_gene = NULL)
 
 plot_volcano_plot(result_df, 
                   figure_folder = file.path(result_folder,"02-DEG"),
@@ -239,9 +278,21 @@ plot_gene_heatmap(vsd_obj, gene_list = target_gene ,
 
 ```
 
+
 \newpage
 
-# 4. Pathway Enrichment Analysis
+# 4.GSVA analysis
+
+```{r GSVA_analysis, fig.width=8, fig.height=6}
+
+
+
+
+```
+
+\newpage
+
+# 5. Pathway Enrichment Analysis
 
 ```{r Enrichment_DEG_1,fig.width=12, fig.height=8}
 deg1 <- result_df %>% filter(padj < 0.05 & abs(log2FoldChange) > 1)

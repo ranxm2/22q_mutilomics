@@ -135,7 +135,7 @@ plot_sample_PCA_plot(dds_obj,figure_folder = file.path(result_folder,"01-Sample_
 
 ## (2) DEM visualization - Volcano plot and Heatmap
 
-```{r volcano_DEG, fig.width=8, fig.height=8}
+```{r volcano_DEG, fig.width=6, fig.height=6}
 result_df <- results(dds_obj) %>%
   as.data.frame() %>%
   rownames_to_column(var = "GeneName") %>%
@@ -148,22 +148,22 @@ result_df <- results(dds_obj) %>%
 plot_volcano_plot(result_df, 
                   figure_folder = file.path(result_folder,"02-DEG"),
                   file_name = "02_volcano_plot_log2fc_1",
-                  thread = 1 ,dot_size =3, label_gene = NULL)
+                  thread = 1 ,dot_size =2, label_gene = NULL)
 
 plot_volcano_plot(result_df, 
                   figure_folder = file.path(result_folder,"02-DEG"),
                   file_name = "02_volcano_plot_log2fc_1_with_label_miRNA",
-                  thread = 1 , dot_size =3, label_gene = target_miRNA)
+                  thread = 1 , dot_size =2, label_gene = target_miRNA)
 
 plot_volcano_plot(result_df, 
                   figure_folder = file.path(result_folder,"02-DEG"),
                   file_name = "03_volcano_plot_log2fc_1.5",
-                  thread = 1.5 ,  dot_size =3,label_gene = NULL)
+                  thread = 1.5 ,  dot_size =2,label_gene = NULL)
 
 plot_volcano_plot(result_df, 
                   figure_folder = file.path(result_folder,"02-DEG"),
                   file_name = "03_volcano_plot_log2fc_1.5_with_label_miRNA",
-                  thread = 1.5 , dot_size =3, label_gene = target_miRNA)
+                  thread = 1.5 , dot_size =2, label_gene = target_miRNA)
 
 ```
 
