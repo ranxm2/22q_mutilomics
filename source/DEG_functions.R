@@ -33,6 +33,7 @@ library(extrafont)
 
 
 
+
 Result_folder_structure <- function(result_folder) {
   dir.create(result_folder, showWarnings = FALSE)
   dir.create(paste0(result_folder, "/01-Sample_info"), showWarnings = FALSE)
@@ -155,6 +156,7 @@ plot_sample_PCA_plot <- function(dds_obj, figure_folder, file_name,
   ggsave(file.path(figure_folder, paste0(file_name, ".pdf")), 
          p,width = 6, height = 4, units = "in")
   print("PCA plot is done")
+  print(p)
 }
 
 # # test for the function
@@ -163,45 +165,260 @@ plot_sample_PCA_plot <- function(dds_obj, figure_folder, file_name,
 #                    reference_group, compare_group)
 
 
-plot_volcanoplot <- function(result_df, figure_folder, file_name, label_gene = NULL) {
+plot_volcano_plot <- function(result_df, figure_folder, file_name, thread = 1, dot_size =2, label_gene = NULL) {
   
-  deg <- results(dds)
-  deg <- as.data.frame(deg)
   result_df <- result_df  %>% filter(!is.na(padj))
-  max_p  <- max(-log10(deg$padj), na.rm = TRUE)
-  max_fc <- max(abs(deg$log2FoldChange), na.rm = TRUE)
+  max_p  <- max(-log10(result_df$padj), na.rm = TRUE)
+  max_fc <- max(abs(result_df$log2FoldChange), na.rm = TRUE)
   
-  deg$diffexpressed <- "NO"
-  deg$diffexpressed[deg$log2FoldChange > 1 & deg$padj < 0.05] <- "UP"
-  deg$diffexpressed[deg$log2FoldChange < -1 & deg$padj < 0.05] <- "DOWN"
-  num_up   <- sum(deg$diffexpressed == "UP")
-  num_down <- sum(deg$diffexpressed == "DOWN")
-  p <-ggplot(deg, aes(log2FoldChange, -log10(padj), color = diffexpressed)) +
-    geom_point(show.legend = F) +
+  
+  # Define the factor levels so that "NO" is last
+  result_df <- result_df %>%
+    mutate(
+      diffexpressed = if_else(log2FoldChange > thread & padj < 0.05, "UP",
+                              if_else(log2FoldChange < -thread & padj < 0.05, "DOWN", "NO")),
+      diffexpressed = factor(diffexpressed, levels = c("NO", "UP", "DOWN" )) # Custom order
+    ) %>%
+    arrange(diffexpressed)  # Arrange based on the custom factor order
+  
+  
+  label_gene <- intersect(label_gene, result_df$GeneName)
+  label_df  <- result_df %>% 
+                filter(GeneName %in% label_gene & diffexpressed != "NO")
+  
+  num_up   <- sum(result_df$diffexpressed == "UP")
+  num_down <- sum(result_df$diffexpressed == "DOWN")
+  
+  p <-ggplot(  result_df , aes(log2FoldChange, -log10(padj), color = diffexpressed)) +
+    geom_point(show.legend = F,size =dot_size) +
     scale_color_manual(values = c("DOWN" = "blue", "NO" = "grey", "UP" = "red")) +
     scale_x_continuous(limits = c(- max_fc , max_fc )) +
     scale_y_continuous(limits = c(0,max_p  )) +
     # geom_label_repel(max.overlaps = 20, show.legend = F, nudge_y = 2, nudge_x = 2) +
-    geom_vline(xintercept = c(-1, 1)) +
+    geom_vline(xintercept = c(-thread, thread)) +
     geom_hline(yintercept = -log10(0.05)) +
     theme_classic() +
     theme(legend.position = "right") +
-    annotate("text", x = 0.2 * max_fc + 1, y = 0.9 * max_p, 
+    annotate("text", x = 0.2 * max_fc + thread, y = 0.9 * max_p, 
              label = paste("UP:", num_up), color = "red",size=6 ) +
-    annotate("text", x = -0.2 * max_fc - 1, y = 0.9 * max_p, 
+    annotate("text", x = -0.2 * max_fc - thread, y = 0.9 * max_p, 
              label = paste("DOWN:", num_down), color = "blue",size=6) +
+    
+    # Auto-annotations with dynamic colors
+    geom_label_repel(data = label_df, 
+                     aes(label = GeneName, color = diffexpressed), 
+                     size = 4, 
+                     max.overlaps = 50, 
+                     show.legend = FALSE, 
+                     box.padding = 0.5, 
+                     point.padding = 0.3) +
+    
     theme( text = element_text(family = "Arial", colour = "black"),
            axis.title = element_text(color = "black", family = "Arial", size = 16),  # Increase axis title size
            axis.text = element_text(color = "black", family = "Arial", size = 14),   # Increase axis text size
            legend.position = "right"
     )
   
-  ggsave(file.path(output_dir,"01-DEG" , "05_volcano_plot_all_gene_log2fc_1.png"), p, width = 8, height = 8, units = "in", dpi = 300)
-  ggsave(file.path(output_dir, "01-DEG" ,"05_volcano_plot_all_gene_log2fc_1.pdf"), p, width = 8, height = 8, units = "in", dpi = 300)
+  ggsave(file.path(figure_folder, paste0(file_name, ".png")),
+         p, width = 8, height = 8, units = "in", dpi = 300)
+  ggsave(file.path(figure_folder, paste0(file_name, ".pdf")),
+         p, width = 8, height = 8, units = "in")
+  print(sprintf("Volcano plot for %s", file_name))
+  print(p)
+}
+
+
+# # test for the function
+# plot_volcano_plot(result_df, 
+#                   figure_folder = file.path(result_folder,"02-DEG"),
+#                   file_name = "02_volcano_plot_log2fc_1",
+#                   thread = 1 ,label_gene = NULL)
+# 
+# plot_volcano_plot(result_df, 
+#                   figure_folder = file.path(result_folder,"02-DEG"),
+#                   file_name = "03_volcano_plot_log2fc_1.5",
+#                   thread = 1.5 ,label_gene = NULL)
+
+
+plot_gene_heatmap <-  function(vsd_obj, gene_list, figure_folder, file_name, 
+                               reference_group, compare_group,
+                               cluster_rows = FALSE, cluster_cols = FALSE,
+                               scale = "none",show_rownames =FALSE){
   
+  # make the color scale
+  brewer_palette <- "RdBu"
+  ramp <- colorRampPalette( RColorBrewer::brewer.pal(11, brewer_palette))
+  mr <- ramp(256)[256:1]
+  
+  # color map
+  unique_groups <- c(reference_group, compare_group)
+  color_palette <- c("#10d5da","#fe867f")  # Extend this list if you have more groups
+  assigned_colors <- setNames(color_palette[seq_along(unique_groups)], unique_groups)
+  annotation_colors <- list(group = assigned_colors)
+  annotation_col <- as.data.frame(colData(vsd_obj)[, "group", drop = FALSE])
+
+  stabilized_counts <- assay(vsd_obj)
+  row_variances <- rowVars(stabilized_counts)
+  
+  stabilized_counts <- stabilized_counts - rowMeans(stabilized_counts, na.rm=T)
+  stabilized_counts <- stabilized_counts[gene_list, rownames(annotation_col)]
+  
+  print(sprintf("Heatmap for %s ", file_name))
+  
+  p <-pheatmap::pheatmap(stabilized_counts,
+                           color = mr,
+                           scale = scale,
+                           annotation_col = annotation_col,
+                           annotation_colors = annotation_colors,
+                           cluster_rows = cluster_rows,
+                           cluster_cols = cluster_cols ,
+                           fontsize_col = 10,
+                           fontsize_row = 10,
+                           treeheight_row = 0,
+                           show_rownames = show_rownames,
+                           border_color = NA)
+    
+  ggsave(file.path(figure_folder, paste0(file_name, ".png")), 
+         p, width = 8, height = 8, units = "in", dpi = 300)
+  ggsave(file.path(figure_folder, paste0(file_name, ".pdf")),
+         p, width = 8, height = 8, units = "in")
+         
+}
+
+# # test for the function
+# plot_gene_heatmap(vsd_obj, gene_list = DEG_gene_1, 
+#                   figure_folder = file.path(result_folder,"02-DEG"),
+#                   file_name = "02_heatmap_log2fc_1_row",
+#                   reference_group, compare_group,
+#                   cluster_rows = TRUE, cluster_cols = FALSE, 
+#                   scale = "row")
+
+
+
+
+map_genes <- function(result, mapping, gene_name_map) {
+  # Ensure the result data frame has columns to store the mapped values
+  result$intersection_gene <- NA
+  result$intersection_gene_id <- NA
+  
+  for (i in 1:nrow(result)) {
+    # Step 1: Extract and split gene IDs from the intersection column
+    gene_id <- result$intersection[i]
+    gene_id <- strsplit(gene_id, ",")[[1]]
+    
+    # Step 2: Map gene IDs to Ensembl IDs using the provided mapping
+    ensembl_ids <- sapply(gene_id, function(id) mapping[[id]])
+    
+    # Step 3: Convert the Ensembl IDs to a single string
+    ensembl_ids_string <- paste(ensembl_ids, collapse = ",")
+    
+    # Step 4: Map Ensembl IDs to gene names using the gene_name_map
+    gene_names <- sapply(ensembl_ids, function(id) gene_name_map[id])
+    gene_names_string <- paste(gene_names, collapse = ",")
+    
+    # Step 5: Store the results in the result data frame
+    result$intersection_gene[i] <- gene_names_string
+    result$intersection_gene_id[i] <- ensembl_ids_string
   }
+  
+  return(result)
+}
 
 
+
+Enrichment_analysis <- function(gene_list, result_folder, file_name,gene_name_mapping, flag = "Up"){
+  enrichment <- gost(query = gene_list,organism = "hsapiens", correction_method = "fdr", evcodes = T)
+  result <- subset(enrichment$result, select = -c(parents))
+  result <- map_genes(result, enrichment$meta$genes_metadata$query$query_1$mapping, gene_name_mapping)
+  result <-  result %>%  
+    mutate(term = sprintf("%s - %s",  source, term_name))
+  write.csv(result, file.path(result_folder, paste0(file_name, ".csv")), 
+            row.names = FALSE)
+  
+  print(sprintf("Enrichment analysis for %s ", file_name))
+  
+  result_df_30 <- result %>%
+    dplyr::select(term, p_value) %>%
+    arrange(p_value) %>%   # Sort p_value from smallest to largest
+    slice_head(n = 30) %>%
+    mutate(term = factor(term, levels = rev(term)))     # Select the top 30 smallest p-values
+  
+  p<-ggplot(result_df_30, aes(x = term, y = -log10(p_value), fill = -log10(p_value))) +
+    geom_bar(stat = "identity", show.legend = TRUE) +
+    # Apply different color scales based on flag value
+    {
+      if (flag == "Up") {
+        scale_fill_gradient(high = "#a50f15", low = "#fc9272")  # Red scale for UP
+      } else if (flag == "Down") {
+        scale_fill_gradient(low = "#56B1F7", high = "#132B43")  # Blue scale for DOWN
+      } else {
+        scale_fill_manual(values = rep("lightblue", nrow(result_df_30)))  # Default to light blue
+      }
+    } +
+    ylab("-log10(FDR)") +
+    xlab("") +
+    ggtitle("Top 30 Pathways (Sorted by FDR)") +
+    coord_flip() +
+    theme_classic(base_size = 14) +
+    theme(text = element_text(family = "Arial", size = 14, colour = "black"),
+          axis.title = element_text(color = "black"),
+          axis.text = element_text(color = "black"),
+          plot.title = element_text(family = "Arial", size = 14, face = "bold", hjust = 0.5)) +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black")
+  
+  print(p)
+  ggsave(file.path(result_folder,
+                   paste0(file_name, "_top30_pathways.png")), p,
+         width = 12, height = 8, units = "in", dpi = 300)
+  ggsave(file.path(result_folder, 
+                   paste0(file_name, "_top30_pathways.pdf")), p,
+         width = 12, height = 8, units = "in")
+  
+  print(sprintf("Enrichment analysis for GOBP %s ", file_name))
+  result_GOBP <- result %>% filter(source == "GO:BP")
+  write.csv(result_GOBP, file.path(result_folder, 
+                                   paste0(file_name, "_GO_BP.csv")), 
+            row.names = FALSE)
+  
+  result_df_30_GOBP <- result_GOBP %>%
+    dplyr::select(term, p_value) %>%
+    arrange(p_value) %>%   # Sort p_value from smallest to largest
+    slice_head(n = 30)%>%
+    mutate(term = factor(term, levels = rev(term)))    # Select the top 30 smallest p-values
+  
+  p<-ggplot(result_df_30_GOBP, aes(x = term, y = -log10(p_value), fill = -log10(p_value))) +
+    geom_bar(stat = "identity", show.legend = TRUE) +
+    # Apply different color scales based on flag value
+    {
+      if (flag == "Up") {
+        scale_fill_gradient(high = "#a50f15", low = "#fc9272")  # Red scale for UP
+      } else if (flag == "Down") {
+        scale_fill_gradient(low = "#56B1F7", high = "#132B43")  # Blue scale for DOWN
+      } else {
+        scale_fill_manual(values = rep("lightblue", nrow(result_df_30)))  # Default to light blue
+      }
+    } +
+    ylab("-log10(FDR)") +
+    xlab("") +
+    ggtitle("Top 30 Pathways for GOBP (Sorted by FDR)") +
+    coord_flip() +
+    theme_classic(base_size = 14) +
+    theme(text = element_text(family = "Arial", size = 14, colour = "black"),
+          axis.title = element_text(color = "black"),
+          axis.text = element_text(color = "black"),
+          plot.title = element_text(family = "Arial", size = 14, face = "bold", hjust = 0.5)) +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black")
+  
+  print(p)
+  ggsave(file.path(result_folder, 
+                   paste0(file_name, "_top30_pathways_GOBP.png")), p,
+         width = 12, height = 8, units = "in", dpi = 300)
+  ggsave(file.path(result_folder, 
+                   paste0(file_name, "_top30_pathways_GOBP.pdf")), p,
+         width = 12, height = 8, units = "in")
+  
+  
+}
 
 
 

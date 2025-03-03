@@ -1,0 +1,223 @@
+---
+title: "Differential Expression Analysis for small RNA-seq data"
+subtitle: "Vehicle contition: 22q vs Control"
+author: "Ximing Ran"
+date: "2025-02-28"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: false
+  html_document:
+    # code_folding: hide
+    toc: true
+    toc_float: true
+hitheme: tomorrow
+highlighter: highlight.js
+
+---
+
+```{r setup, include=FALSE}
+# load libraries
+library(tidyverse)
+library(knitr)
+set.seed(2024)
+
+knitr::opts_chunk$set(
+  # echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.path = "./results/01-DEM-Vehicle/Analysis_figure/"
+)
+
+theme_set(theme_bw() + theme(legend.position = "bottom"))
+knitr::kable(head(mtcars[, 1:4]), "simple")
+```
+
+```{r}
+library(tibble)
+library(tidyr)
+library(dplyr)
+library(rtracklayer)
+```
+
+
+
+```{r local_function_load}
+# load function from local files
+source(here::here("source", "DEG_functions.R"))
+```
+
+\newpage
+
+# 1. Read the count data
+In this section, we will read the clean count data from the synaptosomes_miRNARNA folder. The data is stored in the format of `.csv`. We will read the data and filter the columns based on the condition list. The final table will be stored in `results/02-DEG-Vehicle/DESeq2_results.csv`.
+
+```{r load_bulkRNA_data}
+count_mature<- read.csv(here::here("data", "synaptosomes_miRNA", "raw",
+                                      "mature_counts.csv"))
+
+
+
+rownames(count_mature) <- count_mature$X
+count_mature <- count_mature[, -1]
+count_mature <-t(count_mature)
+rownames(count_mature) <- gsub("\\.", "-", rownames(count_mature))
+
+# sort the columns by the colname
+condition_list <- data.frame(
+  group = c(rep("CTRL_Vehicle", 10),
+            rep("22q_Vehicle", 10),
+            rep("CTRL_TTX", 10),
+            rep("22q_TTX", 10))
+)
+row.names(condition_list) <- c(
+  paste0("V", rep(1:10, each = 2), "-", 1:2),
+  paste0("T", rep(1:10, each = 2), "-", 1:2)
+)
+
+count_mature <- count_mature[, rownames(condition_list)]
+
+
+target_miRNA <- c("hsa-miR-185-5p","hsa-miR-214-3p","hsa-miR-128-3p")
+
+```
+
+
+# 2. Differential expression analysis
+
+In this section, we will perform differential expression analysis using DESeq2. We will compare the 22q vs Control in the vehicle condition. The results will be stored in `results/01-DEM-Vehicle/DESeq2_results.csv`.
+
+```{r DESeq2_analysis}
+# Init the result folder structure for the result
+result_folder = file.path("results", "01-DEM-Vehicle")
+Result_folder_structure(result_folder)
+
+# load the comparison group information
+reference_group <- "CTRL_Vehicle"
+compare_group <- "22q_Vehicle"
+
+filter_sample_info <- condition_list %>% 
+  filter(group %in% c(reference_group, compare_group))
+filter_counts <- count_mature[, rownames(filter_sample_info)]
+
+# Run the DESeq2 analysis
+dds_obj <- DEAnalysis(counts = filter_counts , 
+                       reference_group = reference_group,
+                       compare_group = compare_group,
+                       condition_list = filter_sample_info,
+                       target_gene = target_gene,
+                       result_folder = result_folder)
+```
+
+
+\newpage
+
+# 3. Visualization for reuslt
+
+## (1) Sample information
+```{r Sample_dis_Heatmap, fig.width=8, fig.height=6}
+# Plot the sample distance 
+plot_sample_heatmap(dds_obj, figure_folder =
+                    file.path(result_folder,"01-Sample_info"),
+                    file_name = "01_sample_distance_heatmap")
+```
+
+
+```{r  Sample_PCA, fig.width=8, fig.height=6}
+# Plot the PCA plot for the sample
+plot_sample_PCA_plot(dds_obj,figure_folder = file.path(result_folder,"01-Sample_info"),
+                   file_name = "02_sample_PCA_plot",
+                   reference_group, compare_group)
+```
+
+\newpage
+
+## (2) DEM visualization - Volcano plot and Heatmap
+
+```{r volcano_DEG, fig.width=8, fig.height=8}
+result_df <- results(dds_obj) %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "GeneName") %>%
+  dplyr::select(GeneName, everything()) %>%
+  filter(!is.na(padj)) %>%  # Correct way to filter non-NA values
+  arrange(padj)
+
+
+# Plot the volcano plot for the DEG
+plot_volcano_plot(result_df, 
+                  figure_folder = file.path(result_folder,"02-DEG"),
+                  file_name = "02_volcano_plot_log2fc_1",
+                  thread = 1 ,dot_size =3, label_gene = NULL)
+
+plot_volcano_plot(result_df, 
+                  figure_folder = file.path(result_folder,"02-DEG"),
+                  file_name = "02_volcano_plot_log2fc_1_with_label_miRNA",
+                  thread = 1 , dot_size =3, label_gene = target_miRNA)
+
+plot_volcano_plot(result_df, 
+                  figure_folder = file.path(result_folder,"02-DEG"),
+                  file_name = "03_volcano_plot_log2fc_1.5",
+                  thread = 1.5 ,  dot_size =3,label_gene = NULL)
+
+plot_volcano_plot(result_df, 
+                  figure_folder = file.path(result_folder,"02-DEG"),
+                  file_name = "03_volcano_plot_log2fc_1.5_with_label_miRNA",
+                  thread = 1.5 , dot_size =3, label_gene = target_miRNA)
+
+```
+
+
+```{r heatmap_DEG, fig.width=8, fig.height=8}
+
+# Plot the heatmap for the DEG
+vsd_obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+
+DEG_gene_1 <- result_df %>% filter(abs(log2FoldChange) > 1) %>%  pull(GeneName)
+DEG_gene_1.5 <- result_df %>% filter(abs(log2FoldChange) > 1.5) %>% pull(GeneName)
+
+plot_gene_heatmap(vsd_obj, gene_list = DEG_gene_1, 
+                  figure_folder = file.path(result_folder,"02-DEG"),
+                  file_name = "02_heatmap_log2fc_1",
+                  reference_group, compare_group,
+                  cluster_rows = TRUE, cluster_cols = FALSE, 
+                  scale = "none")
+plot_gene_heatmap(vsd_obj, gene_list = DEG_gene_1, 
+                  figure_folder = file.path(result_folder,"02-DEG"),
+                  file_name = "02_heatmap_log2fc_1_row",
+                  reference_group, compare_group,
+                  cluster_rows = TRUE, cluster_cols = FALSE, 
+                  scale = "row")
+
+plot_gene_heatmap(vsd_obj, gene_list = DEG_gene_1, 
+                  figure_folder = file.path(result_folder,"02-DEG"),
+                  file_name = "02_heatmap_log2fc_1",
+                  reference_group, compare_group,
+                  cluster_rows = TRUE, cluster_cols = FALSE, 
+                  scale = "none")
+
+
+plot_gene_heatmap(vsd_obj, gene_list = DEG_gene_1.5, 
+                  figure_folder = file.path(result_folder,"02-DEG"),
+                  file_name = "03_heatmap_log2fc_1.5_row",
+                  reference_group, compare_group,
+                  cluster_rows = TRUE, cluster_cols = FALSE, 
+                  scale = "row")
+
+plot_gene_heatmap(vsd_obj, gene_list = DEG_gene_1.5, 
+                  figure_folder = file.path(result_folder,"02-DEG"),
+                  file_name = "03_heatmap_log2fc_1.5",
+                  reference_group, compare_group,
+                  cluster_rows = TRUE, cluster_cols = FALSE, 
+                  scale = "none")
+```
+
+
+
+
+\newpage
+# Session information
+```{r}
+sessionInfo()
+```
+
