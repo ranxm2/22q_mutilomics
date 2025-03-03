@@ -497,15 +497,31 @@ for (miRNA_name in miRNA_list_DEM_down ){
     ungroup()
   # Create a graph object
   mygraph <- graph_from_data_frame( edges, vertices=vertices )
+  
+  palette("R3")  # Set the R3 palette
+r3_palette <- palette()  # Extract colors
+custom_palette  <- r3_palette[-1]  # Remove the first color (black)
 
+
+
+library(ggthemes)
+library(ggplot2)
+library(ggraph)
+
+# Extract the Classical Tableau 10 color palette
+custom_palette <- tableau_color_pal("Classic 10")(10)
   
 p <- ggraph(mygraph, layout = 'dendrogram', circular = TRUE) + 
     geom_edge_diagonal(colour="grey") +
 
     # Apply the correct palette
-scale_color_d3(palette = "category10") + 
+
+    # Use custom colors without black
+    scale_color_manual(values = custom_palette) +  
+    scale_fill_manual(values = custom_palette) +  
   
-    geom_node_text(aes(x = x*1.15, y=y*1.15, filter = leaf, label=name, angle = angle, hjust=hjust, colour=group), 
+    geom_node_text(aes(x = x*1.15, y=y*1.15, filter = leaf, label=name, 
+                       angle = angle, hjust=hjust, colour=group), 
                    size=2.7, alpha=10) +
     geom_node_point(aes(filter = leaf, x = x*1.07, y=y*1.07, colour=group, size=value)) +
     scale_size_continuous(range = c(0.1, 5)) +
