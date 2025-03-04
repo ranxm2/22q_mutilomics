@@ -281,11 +281,72 @@ plot_gene_heatmap(vsd_obj, gene_list = target_gene ,
 
 \newpage
 
-# 4.GSVA analysis
+# 4. GSVA analysis
 
-```{r GSVA_analysis, fig.width=8, fig.height=6}
+```{r GSVA_analysis, fig.width=4, fig.height=6}
+
+# 
+# gmxFile <- here::here("data", "ref", "c5.go.v2023.1.Hs.symbols.gmt")
+# go_list <- getGmt(gmxFile)
+#
+# geneset <- go_list
+# dat <- as.matrix(counts)
+# 
+# gsvapar <- gsvaParam(dat, geneset, maxDiff=TRUE)
+# gsva_es <- gsva(gsvapar)
+# gsva_matrix <- as.data.frame(gsva_es)
+# 
+# # save the result
+# write.csv(gsva_matrix, file.path(result_folder,"04-GSVA", "01_GSVA_matrix.csv"))
+# 
+# 
+# 
+# 
+
+gsva_matrix <- read.csv(file.path(result_folder,"04-GSVA", "01_GSVA_matrix.csv"), 
+                        row.names = 1)
+colnames(gsva_matrix) <- gsub("X", "", colnames(gsva_matrix))
+condition_list_label <- condition_list  %>%
+                        filter(group %in% c("CTRL_Vehicle","22q_Vehicle")) %>%
+  mutate(group = recode(group,
+                        "CTRL_Vehicle" = "CTRL",
+                        "22q_Vehicle" = "22q11DS"))
+
+reference_group = "CTRL"
+compare_group = "22q11DS"
+
+# plot the heatmap for the GSVA result
+pathway_list <- read.csv(here::here("data", "ref", "focus-pathway_2024_10_03.csv"))
 
 
+# # plot for all pathway
+# for (i in 1:nrow(pathway_list)){
+#   if (i %% 10 == 0) print(i)
+#   pathway_name <- pathway_list$pathway[i]
+#   plot_gsva_boxplot(gsva_matrix,
+#                     condition_list_label =condition_list_label,
+#                     pathway_name =  pathway_name,
+#                     figure_folder = file.path(result_folder,"04-GSVA","Boxplot"),
+#                     file_name = paste0("GSVA_", pathway_name),
+#                     fig.height = 6, fig.width = 4,
+#                     reference_group, compare_group)
+# 
+# }
+
+
+# plot for the focus pathway
+for (i in 1:3){
+  pathway_name <- pathway_list$pathway[i]
+  print(pathway_name)
+  p<-plot_gsva_boxplot(gsva_matrix,
+                    condition_list_label =condition_list_label,
+                    pathway_name =  pathway_name,
+                    figure_folder = file.path(result_folder,"04-GSVA","Boxplot"),
+                    file_name = paste0("GSVA_", pathway_name),
+                    fig.height = 6, fig.width = 4,
+                    reference_group, compare_group)
+  print(p)
+}
 
 
 ```

@@ -30,9 +30,8 @@ library(ggrepel)
 library(patchwork)
 library(ggsignif) 
 library(extrafont)
-
-
-
+library(GSEABase)
+library(ggsignif)
 
 Result_folder_structure <- function(result_folder) {
   dir.create(result_folder, showWarnings = FALSE)
@@ -144,7 +143,9 @@ plot_sample_PCA_plot <- function(dds_obj, figure_folder, file_name,
 #                    reference_group, compare_group)
 
 
-plot_volcano_plot <- function(result_df, figure_folder, file_name, thread = 1, dot_size =2, label_gene = NULL) {
+plot_volcano_plot <- function(result_df, figure_folder, file_name, 
+                              thread = 1, dot_size =2, label_gene = NULL,
+                              fig.width = 8, fig.height = 8){
   
   result_df <- result_df  %>% filter(!is.na(padj))
   max_p  <- max(-log10(result_df$padj), na.rm = TRUE)
@@ -178,9 +179,9 @@ plot_volcano_plot <- function(result_df, figure_folder, file_name, thread = 1, d
     geom_hline(yintercept = -log10(0.05)) +
     theme_classic() +
     theme(legend.position = "right") +
-    annotate("text", x = 0.2 * max_fc + thread, y = 0.9 * max_p, 
+    annotate("text", x = 0.4 * max_fc + thread, y = 0.9 * max_p, 
              label = paste("UP:", num_up), color = "red",size=6 ) +
-    annotate("text", x = -0.2 * max_fc - thread, y = 0.9 * max_p, 
+    annotate("text", x = -0.4 * max_fc - thread, y = 0.9 * max_p, 
              label = paste("DOWN:", num_down), color = "blue",size=6) +
     
     # Auto-annotations with dynamic colors
@@ -201,9 +202,9 @@ plot_volcano_plot <- function(result_df, figure_folder, file_name, thread = 1, d
     )
   
   ggsave(file.path(figure_folder, paste0(file_name, ".png")),
-         p, width = 6, height = 6, units = "in", dpi = 300)
+         p, width = fig.width, height = fig.height, units = "in", dpi = 300)
   ggsave(file.path(figure_folder, paste0(file_name, ".pdf")),
-         p, width = 6, height = 6, units = "in")
+         p, width = fig.width, height = fig.height, units = "in")
   print(sprintf("Volcano plot for %s", file_name))
   print(p)
 }
@@ -307,7 +308,8 @@ map_genes <- function(result, mapping, gene_name_map) {
 
 
 
-Enrichment_analysis <- function(gene_list, result_folder, file_name,gene_name_mapping, flag = "Up"){
+Enrichment_analysis <- function(gene_list, result_folder, 
+                                file_name,gene_name_mapping, flag = "Up"){
   enrichment <- gost(query = gene_list,organism = "hsapiens", correction_method = "fdr", evcodes = T)
   result <- subset(enrichment$result, select = -c(parents))
   result <- map_genes(result, enrichment$meta$genes_metadata$query$query_1$mapping, gene_name_mapping)
@@ -402,4 +404,69 @@ Enrichment_analysis <- function(gene_list, result_folder, file_name,gene_name_ma
 }
 
 
+
+
+plot_gsva_boxplot<-  function(gsva_matrix, condition_list_label, pathway_name,
+                                figure_folder, file_name, 
+                                fig.height = 6, fig.width = 4,
+                                reference_group, compare_group){
+  
+  # Sample list sub
+  sample_info <- condition_list_label %>%
+    mutate(sample = rownames(.)) %>%
+    filter(group %in% c(reference_group, compare_group))
+  
+  # Convert gsva_matrix to a data frame and reshape
+  plot_df <- as.data.frame(gsva_matrix) %>%
+    rownames_to_column(var = "pathway") %>%
+    filter(pathway == pathway_name) %>%  # Select the specific pathway
+    pivot_longer(cols = -pathway, names_to = "sample", values_to = "GSVA_score") %>%
+    dplyr::select(-pathway)  %>% 
+    filter(sample %in% sample_info$sample)  %>%
+    left_join(sample_info, by = "sample")   %>% 
+    mutate(group = factor(group, levels = c(reference_group, compare_group)))  # Define the factor levels
+
+  
+  # Ensure colors are mapped to exact group names
+  color_palette <- setNames(c("#10d5da", "#fe867f"), c(reference_group, compare_group))
+  
+  # Process pathway name: remove first part, capitalize first letter, replace underscores with spaces
+  formatted_title <- pathway_name %>%
+    str_remove("^[^_]+_") %>%  # Remove everything before the first underscore
+    str_to_lower() %>%  # Convert everything to lowercase
+    str_replace_all("_", " ") %>%  # Replace underscores with spaces
+    str_to_sentence()  # Capitalize first letter
+  
+  # sub the rna with RNA in formatted_title
+  formatted_title <- str_replace_all(formatted_title, "rna", "RNA")
+  
+  # Create the box plot with scatter overlay
+  p<-ggplot(plot_df, aes(x = group, y = GSVA_score)) +
+    geom_boxplot(aes(fill = group), alpha = 0.9, outlier.shape = NA, color = "black") +  # Box plot with fill color
+    geom_jitter(aes(fill = group), shape = 21, width = 0.2, size = 3, alpha = 0.9, color = "black") +  # Scatter points with fill color
+    # stat_summary(fun = mean, geom = "point", shape = 18, size = 4, color = "black") +  # Mean point
+    geom_signif(comparisons = list(c(reference_group, compare_group)), 
+                test = "t.test", 
+                map_signif_level = TRUE) +  # Add significance annotation
+    scale_fill_manual(values = color_palette) +  # Apply custom colors to boxes & scatter dots
+    theme_minimal(base_family = "Arial") +  # Use Arial font for all text
+    labs(title = formatted_title,  # Use formatted pathway name
+         x = "",  # Remove x-axis label
+         y = "GSVA Score") +
+    theme(text = element_text(size = 14, family = "Arial"),  # Ensure all text uses Arial
+          plot.title = element_text(hjust = 0.5, size = 14),  # Center title
+          axis.text.x = element_text(size = 16, color = "black"),  # Increase x-axis text size and set color to black
+          axis.text.y = element_text(size = 14, color = "black"),  # Set y-axis text color to black
+          axis.title.x = element_text(size = 14, color = "black"),  # Set x-axis title color to black
+          axis.title.y = element_text(size = 14, color = "black"),  # Set y-axis title color to black
+          legend.position = "none")  
+  
+  ggsave(file.path(figure_folder, paste0(file_name, ".png")), p,
+          width = fig.width, height = fig.height, units = "in", dpi = 300)
+  ggsave(file.path(figure_folder, paste0(file_name, ".pdf")), p,
+         width = fig.width, height = fig.height, units = "in")
+  
+  return(p)
+
+}
 
