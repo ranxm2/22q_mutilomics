@@ -1,0 +1,51 @@
+26791574 reads; of these:
+  26791574 (100.00%) were paired; of these:
+    2646083 (9.88%) aligned concordantly 0 times
+    23493553 (87.69%) aligned concordantly exactly 1 time
+    651938 (2.43%) aligned concordantly >1 times
+    ----
+    2646083 pairs aligned concordantly 0 times; of these:
+      440530 (16.65%) aligned discordantly 1 time
+    ----
+    2205553 pairs aligned 0 times concordantly or discordantly; of these:
+      4411106 mates make up the pairs; of these:
+        2846611 (64.53%) aligned 0 times
+        1485065 (33.67%) aligned exactly 1 time
+        79430 (1.80%) aligned >1 times
+94.69% overall alignment rate
+[bam_sort_core] merging from 28 files and 1 in-memory blocks...
+The "-S" option has been depreciated.
+
+        ==========     _____ _    _ ____  _____  ______          _____  
+        =====         / ____| |  | |  _ \|  __ \|  ____|   /\   |  __ \ 
+          =====      | (___ | |  | | |_) | |__) | |__     /  \  | |  | |
+            ====      \___ \| |  | |  _ <|  _  /|  __|   / /\ \ | |  | |
+              ====    ____) | |__| | |_) | | \ \| |____ / ____ \| |__| |
+        ==========   |_____/ \____/|____/|_|  \_\______/_/    \_\_____/
+	  v2.0.2
+
+//========================== featureCounts setting ===========================\\
+||                                                                            ||
+||             Input files : 1 BAM file                                       ||
+||                                                                            ||
+||                           V1-1.bam                                         ||
+||                                                                            ||
+||             Output file : V1-1_feature.txt                                 ||
+||                 Summary : V1-1_feature.txt.summary                         ||
+||              Paired-end : yes                                              ||
+||        Count read pairs : no                                               ||
+||              Annotation : Homo_sapiens.GRCh38.106.gtf (GTF)                ||
+||      Dir for temp files : 02-Feature                                       ||
+||                                                                            ||
+||                 Threads : 1                                                ||
+||                   Level : meta-feature level                               ||
+||      Multimapping reads : not counted                                      ||
+|| Multi-overlapping reads : not counted                                      ||
+||   Min overlapping bases : 1                                                ||
+||                                                                            ||
+\\============================================================================//
+
+//================================= Running ==================================\\
+||                                                                            ||
+|| Load annotation file Homo_sapiens.GRCh38.106.gtf ...                       ||
+Failed to open the annotation file /projects/compbio/users/xran2/tool/RNA_map/grch38/Homo_sapiens.GRCh38.106.gtf, or its format is incorrect, or it contains no 'exon' features.
