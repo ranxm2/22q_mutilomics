@@ -35,7 +35,7 @@ knitr::opts_chunk$set(
   echo = FALSE,
   warning = FALSE,
   message = FALSE,
-  fig.path = "./results/02-Regularion_Network/figures/"
+  fig.path = "./results/02-Regulation_Vehicle/figures/"
 )
 
 theme_set(theme_bw() + theme(legend.position = "bottom"))
