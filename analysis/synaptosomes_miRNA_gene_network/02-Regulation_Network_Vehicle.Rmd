@@ -21,13 +21,14 @@ highlighter: highlight.js
 # load libraries
 library(tidyverse)
 library(knitr)
+library(dplyr)
 set.seed(2024)
 
 knitr::opts_chunk$set(
   # echo = FALSE,
   warning = FALSE,
   message = FALSE,
-  fig.path = "./results/02-Regularion_Network/figures/",
+  fig.path = "./results/02-Regularion_Network/figures/"
 )
 
 theme_set(theme_bw() + theme(legend.position = "bottom"))
@@ -46,6 +47,7 @@ library(rtracklayer)
 ```{r local_function_load}
 # load function from local files
 source(here::here("source", "DEG_functions.R"))
+source(here::here("source", "miRNA_gene_regulation_network.R"))
 
 ```
 
@@ -63,6 +65,11 @@ print("DEG label")
 print(table(DEG$sign))
   
   
+```
+
+
+
+```{r}
 DEM <- read.csv(here::here("analysis", "synaptosomes_miRNA_anlaysis", "results", "01-DEM-Vehicle", "02-DEG", "01_all_gene_results.csv"), row.names = 1)
 DEM <- DEM %>% filter(padj < 0.05 & abs(log2FoldChange) > 1)
 rownames(DEM) <- clean_miRNA(rownames(DEM))
@@ -71,8 +78,8 @@ DEM$miRNA_log2FC <- DEM$log2FoldChange
 DEM$sign <- ifelse(DEM$log2FoldChange > 0, "up", "down")
 print("DEM label")
 print(table(DEM$sign))
-
 ```
+
 
 # 2. Load the ENCORI miRNA-target interaction data
 
@@ -105,19 +112,19 @@ ref_ENCORI[, 15:21] <- ref_ENCORI[, 15:21] %>% mutate(across(everything(), ~ ife
 network_data <- ref_ENCORI %>% 
   filter(miRNA %in% rownames(DEM)) %>% 
   filter(gene %in% rownames(DEG)) %>% 
-  select(miRNA, gene, everything())
+  dplyr::select(miRNA, gene, everything())
 
 
 network_data <- network_data %>%
   # Join with DEM and DEG to get logFC values
-  left_join(DEM %>% select(miRNA, miRNA_log2FC), by = "miRNA") %>%
-  left_join(DEG %>% select(gene, gene_log2FC), by = "gene") %>%
+  left_join(DEM %>% dplyr::select(miRNA, miRNA_log2FC), by = "miRNA") %>%
+  left_join(DEG %>% dplyr::select(gene, gene_log2FC), by = "gene") %>%
   
   # Compute correlation sum
   mutate(correlation = PITA + RNA22 + miRmap + microT + miRanda + PicTar + TargetScan) %>%
   
   # Select relevant columns
-  select(miRNA, gene, correlation, miRNA_log2FC, gene_log2FC) %>%
+  dplyr::select(miRNA, gene, correlation, miRNA_log2FC, gene_log2FC) %>%
   
   # Filter for negative correlations
   filter(miRNA_log2FC * gene_log2FC < 0) %>%

@@ -4,13 +4,7 @@ This repository contains the code and data for the manuscript "".
 
 # Introduction to 22q11.2 deletion syndrome
 
-
-
-
-22q11.2 deletion syndrome (22q11.2DS) is the most common copy number variant (CNV) - associated syndrome, caused by the deletion of a small segment of chromosome 22.
-
 > 22q11.2 deletion syndrome (22q11.2DS) is the most common chromosomal microdeletion disorder, estimated to result mainly from de novo non-homologous meiotic recombination events occurring in approximately 1 in every 1,000 fetuses.
->
 > 
 ![22q region gene](./images/22q_intro.png)
 
@@ -27,12 +21,9 @@ Here we list the genes in the 22q11.2 region:
 McDonald-McGinn, D., Sullivan, K., Marino, B. et al. 22q11.2 deletion syndrome. Nat Rev Dis Primers 1, 15071 (2015). https://doi.org/10.1038/nrdp.2015.71
 
 
-
-
 # File structure
 ```bash
-tree -L 2
-
+> tree -L 2
 .
 ├── README.md
 ├── analysis

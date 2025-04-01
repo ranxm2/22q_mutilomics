@@ -80,7 +80,8 @@ DEAnalysis <- function(counts =NULL,
 
 
 
-plot_sample_heatmap <- function(dds_obj,figure_folder, file_name) {
+plot_sample_heatmap <- function(dds_obj,figure_folder, file_name, fig.width =8,
+                                fig.height =6, save =TRUE) {
    # Now apply variance stabilizing transformation
    vsd.obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
    sampleDists <- dist(t(assay(vsd.obj)))
@@ -91,10 +92,10 @@ plot_sample_heatmap <- function(dds_obj,figure_folder, file_name) {
                            clustering_distance_rows = sampleDists,
                            clustering_distance_cols = sampleDists,
                            col = colors) 
-   ggsave(file.path(figure_folder, paste0(file_name, ".png")), 
-          p, width = 8, height = 6, units = "in", dpi = 300)
-  ggsave(file.path(figure_folder, paste0(file_name, ".pdf")), 
-         p, width = 8, height = 6, units = "in", dpi = 300)
+   if (save){ggsave(file.path(figure_folder, paste0(file_name, ".png")), 
+          p, width = fig.width, height = fig.height, units = "in", dpi = 300)
+            ggsave(file.path(figure_folder, paste0(file_name, ".pdf")), 
+         p, width =  fig.width, height = fig.height, units = "in", dpi = 300)}
    print("Sample distance heatmap is done")
 }
 
@@ -106,8 +107,8 @@ plot_sample_heatmap <- function(dds_obj,figure_folder, file_name) {
 
 
 
-plot_sample_PCA_plot <- function(dds_obj, figure_folder, file_name, 
-                               reference_group, compare_group){
+plot_sample_PCA_plot <- function(dds_obj, figure_folder, file_name, save=TRUE,fig.width =8,
+                                 fig.height =6, reference_group, compare_group){
 
   vsd.obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
   pcaData <- plotPCA(vsd.obj,  intgroup = c("group"), returnData = T)
@@ -129,18 +130,52 @@ plot_sample_PCA_plot <- function(dds_obj, figure_folder, file_name,
     theme(text = element_text(family = "Arial", colour = "black")) +
     scale_color_manual(values = assigned_colors) +
     ggrepel::geom_text_repel(aes(label = name), color = "black")
-  ggsave(file.path(figure_folder, paste0(file_name, ".png")), 
-         p,width = 6, height = 4, units = "in", dpi = 300)
-  ggsave(file.path(figure_folder, paste0(file_name, ".pdf")), 
-         p,width = 6, height = 4, units = "in")
+  
+  if (save){
+    ggsave(file.path(figure_folder, paste0(file_name, ".png")), 
+           p,width = fig.width, height = fig.height, units = "in", dpi = 300)
+    ggsave(file.path(figure_folder, paste0(file_name, ".pdf")), 
+           p,width = fig.width, height = fig.height, units = "in")
+  }
+  
   print("PCA plot is done")
   print(p)
 }
 
-# # test for the function
-# plot_sample_PCA_plot(dds_obj,figure_folder = file.path(result_folder,"01-Sample_info"),
-#                    file_name = "02_sample_PCA_plot", 
-#                    reference_group, compare_group)
+
+
+
+plot_sample_PCA_plot_mutil <- function(dds_obj, figure_folder, file_name,fig.width =8,
+                                       fig.height =6, save=TRUE
+                                ){
+  
+  vsd.obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+  pcaData <- plotPCA(vsd.obj,  intgroup = c("group"), returnData = T)
+  percentVar <- round(100 * attr(pcaData, "percentVar"))
+  
+
+  p <-ggplot(pcaData, aes(PC1, PC2, color=group)) +
+    geom_point(size=3) +
+    labs(x = paste0("PC1: ",percentVar[1],"% variance"),
+         y = paste0("PC2: ",percentVar[2],"% variance"),
+    ) +
+    stat_ellipse(level = 0.95)+
+    theme_bw() +
+    # theme_classic()+
+    theme(text = element_text(family = "Arial", colour = "black")) +
+    # scale_color_manual(values = assigned_colors) +
+    ggrepel::geom_text_repel(aes(label = name), color = "black")
+  
+  if (save){
+    ggsave(file.path(figure_folder, paste0(file_name, ".png")), 
+           p,width = fig.width, height = fig.height, units = "in", dpi = 300)
+    ggsave(file.path(figure_folder, paste0(file_name, ".pdf")), 
+           p,width = fig.width, height = fig.height, units = "in")
+  }
+  
+  print("PCA plot is done")
+  print(p)
+}
 
 
 plot_volcano_plot <- function(result_df, figure_folder, file_name, 
@@ -224,7 +259,9 @@ plot_volcano_plot <- function(result_df, figure_folder, file_name,
 
 plot_gene_heatmap <-  function(vsd_obj, gene_list, figure_folder, file_name, 
                                reference_group, compare_group,
-                               cluster_rows = FALSE, cluster_cols = FALSE,
+                               cluster_rows = FALSE, cluster_cols = FALSE, save=TRUE,
+                               fig.width =8,
+                               fig.height =8, 
                                scale = "none",show_rownames =FALSE){
   
   # make the color scale
@@ -247,7 +284,7 @@ plot_gene_heatmap <-  function(vsd_obj, gene_list, figure_folder, file_name,
   
   print(sprintf("Heatmap for %s ", file_name))
   
-  p <-pheatmap::pheatmap(stabilized_counts,
+  p <- pheatmap::pheatmap(stabilized_counts,
                            color = mr,
                            scale = scale,
                            annotation_col = annotation_col,
@@ -260,10 +297,12 @@ plot_gene_heatmap <-  function(vsd_obj, gene_list, figure_folder, file_name,
                            show_rownames = show_rownames,
                            border_color = NA)
     
+  if (save){
   ggsave(file.path(figure_folder, paste0(file_name, ".png")), 
-         p, width = 8, height = 8, units = "in", dpi = 300)
+         p, width = fig.width, height = fig.height, units = "in", dpi = 300)
   ggsave(file.path(figure_folder, paste0(file_name, ".pdf")),
-         p, width = 8, height = 8, units = "in")
+         p, width = fig.width, height = fig.height, units = "in")
+  }
          
 }
 
@@ -461,6 +500,8 @@ plot_gsva_boxplot<-  function(gsva_matrix, condition_list_label, pathway_name,
           axis.title.y = element_text(size = 14, color = "black"),  # Set y-axis title color to black
           legend.position = "none")  
   
+
+  
   ggsave(file.path(figure_folder, paste0(file_name, ".png")), p,
           width = fig.width, height = fig.height, units = "in", dpi = 300)
   ggsave(file.path(figure_folder, paste0(file_name, ".pdf")), p,
@@ -469,4 +510,179 @@ plot_gsva_boxplot<-  function(gsva_matrix, condition_list_label, pathway_name,
   return(p)
 
 }
+
+
+
+plot_gsva_boxplot_4_group<-  function(gsva_matrix, condition_list_label, pathway_name,
+                              figure_folder, file_name, 
+                              fig.height = 6, fig.width = 4,
+                              save=TRUE,
+                              group_1=NULL, group_2=NULL, group_3=NULL, group_4=NULL){
+  
+  # Sample list sub
+  sample_info <- condition_list_label %>%
+    mutate(sample = rownames(.)) %>%
+    filter(group %in% c(group_1, group_2, group_3, group_4))
+  
+  # Convert gsva_matrix to a data frame and reshape
+  plot_df <- as.data.frame(gsva_matrix) %>%
+    rownames_to_column(var = "pathway") %>%
+    filter(pathway == pathway_name) %>%  # Select the specific pathway
+    pivot_longer(cols = -pathway, names_to = "sample", values_to = "GSVA_score") %>%
+    dplyr::select(-pathway)  %>% 
+    filter(sample %in% sample_info$sample)  %>%
+    left_join(sample_info, by = "sample")   %>% 
+    mutate(group = factor(group, levels = c(group_1, group_2, group_3, group_4)) )  # Define the factor levels
+  
+  
+  # Ensure colors are mapped to exact group names
+  color_palette <- setNames(c("#BAE3DC", "#F6B3AC", "#8DD2C5","#f47f72"),
+                            c(group_1, group_2, group_3, group_4))
+  
+  
+  # Process pathway name: remove first part, capitalize first letter, replace underscores with spaces
+  formatted_title <- pathway_name %>%
+    str_remove("^[^_]+_") %>%  # Remove everything before the first underscore
+    str_to_lower() %>%  # Convert everything to lowercase
+    str_replace_all("_", " ") %>%  # Replace underscores with spaces
+    str_to_sentence()  # Capitalize first letter
+  
+  # sub the rna with RNA in formatted_title
+  formatted_title <- str_replace_all(formatted_title, "rna", "RNA")
+  
+  score_max <- max(plot_df$GSVA_score)
+  score_scale <- abs(max(plot_df$GSVA_score) - min(plot_df$GSVA_score))*0.5
+  
+  
+  # Create the box plot with scatter overlay
+  p<-ggplot(plot_df, aes(x = group, y = GSVA_score)) +
+    geom_boxplot(aes(fill = group), alpha = 0.9, outlier.shape = NA, color = "black") +  # Box plot with fill color
+    geom_jitter(aes(fill = group), shape = 21, width = 0.2, size = 3, alpha = 0.9, color = "black") +  # Scatter points with fill color
+    # stat_summary(fun = mean, geom = "point", shape = 18, size = 4, color = "black") +  # Mean point
+    geom_signif(comparisons = list(c(group_1, group_2),
+                                   c(group_3, group_4)),
+                test = "t.test",
+                map_signif_level = TRUE,
+                y_position = c(score_max + 0.2*score_scale, score_max + 0.2*score_scale)) +
+    geom_signif(comparisons = list(c(group_1, group_3)),
+                test = "t.test",
+                map_signif_level = TRUE,
+                y_position = score_max + 0.4*score_scale) +
+    
+    geom_signif(comparisons = list(c(group_2, group_4)),
+                test = "t.test",
+                map_signif_level = TRUE,
+                y_position = score_max + 0.6*score_scale) +
+    
+    scale_fill_manual(values = color_palette) +  # Apply custom colors to boxes & scatter dots
+    theme_classic(base_family = "Arial") +  # Use Arial font for all text
+    labs(title = "" ,  # Use formatted pathway name
+         x = "",  # Remove x-axis label
+         y = formatted_title) +
+    theme(
+      legend.position = "none",  # Optional: to hide the legend
+      plot.title = element_text(hjust = 0, size=10),  # Align title to the left
+      axis.text.x = element_text(size = 15, angle=45, hjust=1, color = "black" ),
+      axis.text.y = element_text(size = 15, color = "black"),
+      title = element_text(size = 15, color = "black"),
+      panel.background = element_rect(fill = "transparent", color = NA),  # Transparent panel background
+      plot.background = element_rect(fill = "transparent", color = NA)    # Transparent plot background
+    )
+  
+  if (save){
+  
+  ggsave(file.path(figure_folder, paste0(file_name, ".png")), p,
+         width = fig.width, height = fig.height, units = "in", dpi = 300)
+  ggsave(file.path(figure_folder, paste0(file_name, ".pdf")), p,
+         width = fig.width, height = fig.height, units = "in")}
+  
+  return(p)
+  
+}
+
+
+
+
+plot_expression_boxplot_4_group<-  function(counts_matrix, condition_list_label, feature,
+                                            figure_folder, file_name, 
+                                            fig.height = 6, fig.width = 4,
+                                            save=TRUE,
+                                            group_1=NULL, group_2=NULL, group_3=NULL, group_4=NULL){
+  
+  # Sample list sub
+  sample_info <- condition_list_label %>%
+    mutate(sample = rownames(.)) %>%
+    filter(group %in% c(group_1, group_2, group_3, group_4))
+  
+  # Convert counts_matrix to a data frame and reshape
+  plot_df <- as.data.frame(counts_matrix) %>%
+    rownames_to_column(var = "expression") %>%
+    filter(expression == feature) %>%  # Select the specific pathway
+    pivot_longer(cols = -expression, names_to = "sample", values_to = "Normalized_Expression") %>%
+    dplyr::select(-expression)  %>% 
+    filter(sample %in% sample_info$sample)  %>%
+    left_join(sample_info, by = "sample")   %>% 
+    mutate(group = factor(group, levels = c(group_1, group_2, group_3, group_4)) )  # Define the factor levels
+  
+  
+  # Ensure colors are mapped to exact group names
+  color_palette <- setNames(c("#BAE3DC", "#F6B3AC", "#8DD2C5","#f47f72"),
+                            c(group_1, group_2, group_3, group_4))
+  
+  
+  # Process pathway name: remove first part, capitalize first letter, replace underscores with spaces
+  formatted_title <- feature 
+  
+  
+  score_max <- max(plot_df$Normalized_Expression)
+  score_scale <- abs(max(plot_df$Normalized_Expression) - min(plot_df$Normalized_Expression))*0.5
+  
+  
+  # Create the box plot with scatter overlay
+  p<-ggplot(plot_df, aes(x = group, y = Normalized_Expression)) +
+    geom_boxplot(aes(fill = group), alpha = 0.9, outlier.shape = NA, color = "black") +  # Box plot with fill color
+    geom_jitter(aes(fill = group), shape = 21, width = 0.2, size = 3, alpha = 0.9, color = "black") +  # Scatter points with fill color
+    # stat_summary(fun = mean, geom = "point", shape = 18, size = 4, color = "black") +  # Mean point
+    geom_signif(comparisons = list(c(group_1, group_2),
+                                   c(group_3, group_4)),
+                test = "t.test",
+                map_signif_level = TRUE,
+                y_position = c(score_max + 0.2*score_scale, score_max + 0.2*score_scale)) +
+    geom_signif(comparisons = list(c(group_1, group_3)),
+                test = "t.test",
+                map_signif_level = TRUE,
+                y_position = score_max + 0.4*score_scale) +
+    
+    geom_signif(comparisons = list(c(group_2, group_4)),
+                test = "t.test",
+                map_signif_level = TRUE,
+                y_position = score_max + 0.6*score_scale) +
+    
+    scale_fill_manual(values = color_palette) +  # Apply custom colors to boxes & scatter dots
+    theme_classic(base_family = "Arial") +  # Use Arial font for all text
+    labs(title = formatted_title ,  # Use formatted pathway name
+         x = "",  # Remove x-axis label
+         y ="Normalized Expression" ) +
+    theme(
+      legend.position = "none",  # Optional: to hide the legend
+      plot.title = element_text(hjust = 0.5, size=15, color = "black" ),  # Align title to the left
+      axis.text.x = element_text(size = 15, angle=45, hjust=1, color = "black" ),
+      axis.text.y = element_text(size = 15, color = "black"),
+      title = element_text(size = 15, color = "black"),
+      panel.background = element_rect(fill = "transparent", color = NA),  # Transparent panel background
+      plot.background = element_rect(fill = "transparent", color = NA)    # Transparent plot background
+    )
+  
+  if (save){
+    
+    ggsave(file.path(figure_folder, paste0(file_name, ".png")), p,
+           width = fig.width, height = fig.height, units = "in", dpi = 300)
+    ggsave(file.path(figure_folder, paste0(file_name, ".pdf")), p,
+           width = fig.width, height = fig.height, units = "in")}
+  
+  return(p)
+  
+}
+
+
 

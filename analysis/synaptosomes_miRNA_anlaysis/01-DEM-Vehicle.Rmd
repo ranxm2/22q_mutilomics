@@ -24,7 +24,7 @@ library(knitr)
 set.seed(2024)
 
 knitr::opts_chunk$set(
-  # echo = FALSE,
+  echo = FALSE,
   warning = FALSE,
   message = FALSE,
   fig.path = "./results/01-DEM-Vehicle/Analysis_figure/"
@@ -54,29 +54,37 @@ source(here::here("source", "DEG_functions.R"))
 In this section, we will read the clean count data from the synaptosomes_miRNARNA folder. The data is stored in the format of `.csv`. We will read the data and filter the columns based on the condition list. The final table will be stored in `results/02-DEG-Vehicle/DESeq2_results.csv`.
 
 ```{r load_bulkRNA_data}
-count_mature<- read.csv(here::here("data", "synaptosomes_miRNA", "raw",
-                                      "mature_counts.csv"))
+counts<- read.csv(here::here("data", "synaptosomes_miRNA", "raw",
+                                      "mature_counts.csv"), row.names = 1)
+
+counts <- as.data.frame(counts) 
+counts <- t(counts)
+
+row.names(counts) <- gsub("\\.", "-", row.names(counts))
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "synaptosomes_bulkRNA",
+                                      "sample_info_22q.csv")) %>%
+                    mutate(condition = paste0(Diagosis, "_", Treatment))
 
 
+# Ensure the column names of counts exist in Sample.name
+new_colnames <- sample_list_raw$Label[match(colnames(counts), sample_list_raw$Sample.name)]
 
-rownames(count_mature) <- count_mature$X
-count_mature <- count_mature[, -1]
-count_mature <-t(count_mature)
-rownames(count_mature) <- gsub("\\.", "-", rownames(count_mature))
+# Assign new column names
+colnames(counts) <- new_colnames
+
 
 # sort the columns by the colname
 condition_list <- data.frame(
-  group = c(rep("CTRL_Vehicle", 10),
-            rep("22q_Vehicle", 10),
-            rep("CTRL_TTX", 10),
-            rep("22q_TTX", 10))
-)
-row.names(condition_list) <- c(
-  paste0("V", rep(1:10, each = 2), "-", 1:2),
-  paste0("T", rep(1:10, each = 2), "-", 1:2)
+  group =sample_list_raw$condition
 )
 
-count_mature <- count_mature[, rownames(condition_list)]
+row.names(condition_list) <- sample_list_raw$Label
+
+counts<- counts[, rownames(condition_list)]
+
+miRNA_22q <- c("hsa-miR-185-5p","hsa-miR-185-3p","hsa-miR-1306-5p","hsa-miR-1286")
 
 
 target_miRNA <- c("hsa-miR-185-5p","hsa-miR-214-3p","hsa-miR-128-3p")
@@ -99,7 +107,7 @@ compare_group <- "22q_Vehicle"
 
 filter_sample_info <- condition_list %>% 
   filter(group %in% c(reference_group, compare_group))
-filter_counts <- count_mature[, rownames(filter_sample_info)]
+filter_counts <- counts[, rownames(filter_sample_info)]
 
 # Run the DESeq2 analysis
 dds_obj <- DEAnalysis(counts = filter_counts , 
@@ -127,8 +135,8 @@ plot_sample_heatmap(dds_obj, figure_folder =
 ```{r  Sample_PCA, fig.width=8, fig.height=6}
 # Plot the PCA plot for the sample
 plot_sample_PCA_plot(dds_obj,figure_folder = file.path(result_folder,"01-Sample_info"),
-                   file_name = "02_sample_PCA_plot",
-                   reference_group, compare_group)
+                   file_name = "02_sample_PCA_plot",save = TRUE,
+                   reference_group=reference_group, compare_group=compare_group)
 ```
 
 \newpage
@@ -212,7 +220,41 @@ plot_gene_heatmap(vsd_obj, gene_list = DEG_gene_1.5,
                   scale = "none")
 ```
 
+\newpage
+## (3) 22q miRNA visualization - Heatmap
+```{r heatmap_22q, fig.width=8, fig.height=3}
 
+# Plot the heatmap for the 22q gene
+
+target_miRNA <- intersect(miRNA_22q, rownames(vsd_obj))
+
+
+plot_gene_heatmap(vsd_obj, gene_list = target_miRNA  , 
+                  figure_folder = file.path(result_folder,"05-22q_Gene"),
+                  file_name = "01_heatmap_22q_gene",
+                  reference_group=reference_group, compare_group=compare_group,
+                  cluster_rows = FALSE, cluster_cols = FALSE, 
+                  save = TRUE,
+                  fig.height = 3, fig.width = 8,
+                  scale = "none", show_rownames =TRUE)
+
+
+
+
+
+plot_gene_heatmap(vsd_obj, gene_list = target_miRNA  , 
+                  figure_folder = file.path(result_folder,"05-22q_Gene"),
+                  file_name = "01_heatmap_22q_gene_row",
+                  reference_group=reference_group, compare_group=compare_group,
+                  cluster_rows = FALSE, cluster_cols = FALSE, 
+                  save = TRUE,
+                  fig.height = 3, fig.width = 8,
+                  scale = "row", show_rownames =TRUE)
+
+
+
+
+```
 
 
 \newpage
