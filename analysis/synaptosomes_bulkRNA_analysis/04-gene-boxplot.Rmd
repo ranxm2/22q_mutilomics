@@ -163,7 +163,9 @@ all_gene <- target_gene
 for (index in 1:length(all_gene )){
   plot_gene<- all_gene [index]
   
-  p<-plot_expression_boxplot_4_group(counts_matrix = normalized_count, condition_list_label, feature =  plot_gene ,
+  p<-plot_expression_boxplot_4_group(
+            counts_matrix = normalized_count, 
+            condition_list_label, feature =  plot_gene ,
                                             figure_folder = file.path(result_folder,"Boxplot"),
                                              file_name = paste0("gene_", plot_gene),
                                               fig.height = 6, fig.width = 4,

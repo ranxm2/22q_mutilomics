@@ -47,6 +47,20 @@ McDonald-McGinn, D., Sullivan, K., Marino, B. et al. 22q11.2 deletion syndrome. 
 15 directories, 4 files
 ```
 
+
+# Mauscritp Figures
+
+| Figure | Description | Figure Path | Code of the figure |
+| --- | --- | --- |--- |
+| Figure 4E-L | GSVA score | [Figure](./analysis/synaptosomes_bulkRNA_analysis/results/03-GSVA/Boxplot/GSVA_GOBP_AMPA_GLUTAMATE_RECEPTOR_CLUSTERING.pdf) | [Code](./analysis/synaptosomes_bulkRNA_analysis/03-GSVA.Rmd) |
+| Figurev 5B | Enrichment | [Figure](./analysis/synaptosomes_miRNA_gene_network/03-Vehicle-select_pathway.pdf) | [Code](./analysis/synaptosomes_miRNA_gene_network/03-Vehicle-select_pathway.Rmd) |
+| Figurev 5C-D,6A | miRNA expression | [Figure](./analysis/synaptosomes_miRNA_anlaysis/02-miRNA-boxplot.pdf) | [Code](./analysis/synaptosomes_miRNA_anlaysis/02-miRNA-boxplot.Rmd) |
+| Figurev 5E-H, 6B-C | miRNA impact | [Figure](./analysis/synaptosomes_miRNA_gene_network/02-Regulation_Network_Vehicle.pdf) | [Code](./analysis/synaptosomes_miRNA_gene_network/02-Regulation_Network_Vehicle.Rmd) |
+| Figurev 7A | DEG in CTRL group | [Figure](./analysis/synaptosomes_bulkRNA_analysis/02-DEG-CTRL.pdf) | [Code](./analysis/synaptosomes_bulkRNA_analysis/02-DEG-CTRL.Rmd) |
+| Figurev 7B | DEG in CTRL group | [Figure](./analysis/synaptosomes_bulkRNA_analysis/02-DEG-TTX.pdf) | [Code](./analysis/synaptosomes_bulkRNA_analysis/02-DEG-TTX.Rmd) |
+
+
+
 # Analysis Results
 
 ## 22q missing genes in synaptosomes

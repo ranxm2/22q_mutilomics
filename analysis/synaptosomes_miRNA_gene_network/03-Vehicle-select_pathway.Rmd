@@ -1,0 +1,274 @@
+---
+title: "Differential Expression Analysis for bulk RNA-seq data Pathway Plot"
+subtitle: "Vehicle contition: 22q vs Control"
+author: "Ximing Ran"
+date: "2025-04-02"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: false
+  html_document:
+    # code_folding: hide
+    toc: true
+    toc_float: true
+hitheme: tomorrow
+highlighter: highlight.js
+
+---
+
+```{r setup, include=FALSE}
+# load libraries
+library(tidyverse)
+library(knitr)
+set.seed(2024)
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.path = "./results/04-Enrichment/Analysis_figure/"
+)
+
+theme_set(theme_bw() + theme(legend.position = "bottom"))
+knitr::kable(head(mtcars[, 1:4]), "simple")
+```
+
+```{r}
+library(tibble)
+library(tidyr)
+library(dplyr)
+library(rtracklayer)
+library(gprofiler2)
+```
+
+
+
+```{r local_function_load}
+# load function from local files
+source(here::here("source", "DEG_functions.R"))
+
+gene_name_mapping<- readRDS(here::here("data","ref" ,"gene_name_mapping.rds"))
+
+
+clean_miRNA <- function(x) {
+  x <- trimws(x)          # Remove leading/trailing whitespace
+  x <- gsub("\\.", "-", x) # Replace periods with hyphens
+}
+```
+
+\newpage
+
+
+
+# 1. Read the DEG and DEM from the previous analysis
+
+```{r}
+DEG <- read.csv(here::here("analysis", "synaptosomes_bulkRNA_analysis", "results", "02-DEG-Vehicle", "02-DEG", "01_all_gene_results.csv"), row.names = 1)
+DEG <- DEG %>% filter(padj < 0.05 & abs(log2FoldChange) > 1)
+DEG$sign <- ifelse(DEG$log2FoldChange > 0, "up", "down")
+DEG$gene <- rownames(DEG)
+DEG$gene_log2FC <- DEG$log2FoldChange
+print("DEG label")
+print(table(DEG$sign))
+
+  
+```
+
+
+```{r}
+DEM <- read.csv(here::here("analysis", "synaptosomes_miRNA_anlaysis", "results", "01-DEM-Vehicle", "02-DEG", "01_all_gene_results.csv"), row.names = 1)
+DEM <- DEM %>% filter(padj < 0.05 & abs(log2FoldChange) > 1)
+rownames(DEM) <- clean_miRNA(rownames(DEM))
+DEM$miRNA <- rownames(DEM)
+DEM$miRNA_log2FC <- DEM$log2FoldChange
+DEM$sign <- ifelse(DEM$log2FoldChange > 0, "up", "down")
+print("DEM label")
+print(table(DEM$sign))
+```
+
+
+\newpage
+# 2. Enrichment
+```{r}
+# # Set the path to the downloaded file
+# file_path <- here::here("data", "ref", "ENCORI_hg38_CLIP-seq_all_miRNA.txt")
+# 
+# # Load the data, skipping the initial lines to start from the correct header row
+# ref_ENCORI <- read.table(file_path, header = TRUE, sep = "\t", stringsAsFactors = FALSE, skip = 3, fill = TRUE)
+# 
+# colnames(ref_ENCORI)[2] <- "miRNA"
+# 
+# ref_ENCORI$miRNA <- clean_miRNA(ref_ENCORI$miRNA)
+# colnames(ref_ENCORI)[4] <- "mRNA"
+# 
+# 
+# DEM_gene <- ref_ENCORI %>% filter(miRNA %in% rownames(DEM)) %>% pull(mRNA) %>% unique()
+# 
+# overlap_pairs <- ref_ENCORI %>% filter(mRNA %in% DEM_gene & miRNA %in% rownames(DEM))
+# 
+# overlap_pairs$gene_sign <- ifelse(overlap_pairs$mRNA %in% rownames(DEG[DEG$sign == "up", ]), "up", "down")
+# 
+# overlap_pairs$miRNA_sign <- ifelse(overlap_pairs$miRNA %in% rownames(DEM[DEM$sign == "up", ]), "up", "down")
+# overlap_pairs <- overlap_pairs %>% filter(gene_sign != miRNA_sign)
+# 
+# DEG_overlap <- DEG %>% filter(row.names(.) %in% overlap_pairs$mRNA)
+# table(DEG_overlap$sign)
+# 
+# up_gene <- rownames(DEG_overlap %>% filter(sign == "up"))
+# down_gene <- rownames(DEG_overlap %>% filter(sign == "down"))
+# 
+# 
+# 
+# # Those Enrichment analysis only need to run once
+# 
+# 
+# enrichment <- gost(query = up_gene,organism = "hsapiens", correction_method = "fdr", evcodes = T)
+# result <- subset(enrichment$result, select = -c(parents))
+# result <- map_genes(result, enrichment$meta$genes_metadata$query$query_1$mapping, gene_name_mapping)
+# result <-  result %>%  mutate(term = sprintf("%s - %s",  source, term_name))
+# 
+# result_up<- result
+# write.csv(result, file.path("results", "04-Enrichment", "Up_enrichment.csv"),
+#           row.names = FALSE)
+# 
+# 
+# enrichment <- gost(query = down_gene,organism = "hsapiens", correction_method = "fdr", evcodes = T)
+# result <- subset(enrichment$result, select = -c(parents))
+# result <- map_genes(result, enrichment$meta$genes_metadata$query$query_1$mapping, gene_name_mapping)
+# result <-  result %>%  mutate(term = sprintf("%s - %s",  source, term_name))
+# 
+# result_down<- result
+# write.csv(result, file.path("results", "04-Enrichment", "Down_enrichment.csv"),
+#           row.names = FALSE)
+
+```
+
+
+
+
+
+
+# 3. Load the Enrichment results
+
+```{r up_enrichment, fig.width=8, fig.height=4}
+
+up_pathway_list <- read.csv(here::here("data", "synaptosomes_bulkRNA", "Up_pathway_Veh_logFC_1_2025-04-02.csv"))
+
+up_enrichment <- read.csv(file.path("results", "04-Enrichment", "Up_enrichment.csv"))
+up_enrichment <- up_enrichment %>% filter(term_name %in% up_pathway_list$term_name)
+
+flag = "Up"
+
+result_df_30 <- up_enrichment %>%
+  dplyr::select(term_name, p_value) %>%
+  arrange(p_value) %>%   # Sort p_value from smallest to largest
+  slice_head(n = 30) %>%
+  mutate(term_name = factor(term_name, levels = rev(term_name)))     # Select the top 30 smallest p-values
+
+p <- ggplot(result_df_30, aes(x = term_name, y = -log10(p_value), fill = -log10(p_value))) +
+  geom_bar(stat = "identity") +
+  {
+    if (flag == "Up") {
+      scale_fill_gradient(high = "#a50f15", low = "#fc9272")  # Red scale for UP
+    } else if (flag == "Down") {
+      scale_fill_gradient(low = "#56B1F7", high = "#132B43")  # Blue scale for DOWN
+    } else {
+      scale_fill_manual(values = rep("lightblue", nrow(result_df_30)))  # Default to light blue
+    }
+  } +
+  ylab("-log10(FDR)") +
+  xlab("") +
+  # ggtitle("Top 30 Pathways (Sorted by FDR)") +
+  coord_flip() +
+  theme_classic(base_size = 14) +
+  theme(
+    panel.background = element_rect(fill = "transparent", colour = NA),
+    plot.background = element_rect(fill = "transparent", colour = NA),
+    legend.background = element_rect(fill = "transparent", colour = NA),
+    text = element_text(family = "Arial", size = 14, colour = "black"),
+    axis.title = element_text(color = "black"),
+    axis.text = element_text(color = "black"),
+    plot.title = element_text(family = "Arial", size = 14, face = "bold", hjust = 0.5)
+  ) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +
+  guides(fill = "none")  # This line removes the legend
+
+print(p)
+
+
+ggsave(file.path("results", "04-Enrichment", "Up_enrichment_pathway.png"),
+       p, width = 8, height = 4, units = "in", dpi = 300, bg = "transparent")
+
+ggsave(file.path("results", "04-Enrichment", "Up_enrichment_pathway.pdf"),
+       p, width = 8, height = 4, units = "in", dpi = 300, bg = "transparent")
+
+
+
+```
+
+
+```{r down_enrichment, fig.width=8, fig.height=4}
+
+down_pathway_list <- read.csv(here::here("data", "synaptosomes_bulkRNA", "Down_pathway_Veh_logFC_1_2025-04-02.csv"))
+
+down_enrichment <- read.csv(file.path("results", "04-Enrichment", "Down_enrichment.csv"))
+down_enrichment <- down_enrichment %>% filter(term_name %in% down_pathway_list$term_name)
+
+flag = "Down"
+
+result_df_30 <- down_enrichment %>%
+  dplyr::select(term_name, p_value) %>%
+  arrange(p_value) %>%   # Sort p_value from smallest to largest
+  slice_head(n = 30) %>%
+  mutate(term_name = factor(term_name, levels = rev(term_name)))     # Select the top 30 smallest p-values
+
+
+p <- ggplot(result_df_30, aes(x = term_name, y = -log10(p_value), fill = -log10(p_value))) +
+  geom_bar(stat = "identity") +
+  {
+    if (flag == "Up") {
+      scale_fill_gradient(high = "#a50f15", low = "#fc9272")  # Red scale for UP
+    } else if (flag == "Down") {
+      scale_fill_gradient(low = "#56B1F7", high = "#132B43")  # Blue scale for DOWN
+    } else {
+      scale_fill_manual(values = rep("lightblue", nrow(result_df_30)))  # Default to light blue
+    }
+  } +
+  ylab("-log10(FDR)") +
+  xlab("") +
+  # ggtitle("Top 30 Pathways (Sorted by FDR)") +
+  coord_flip() +
+  theme_classic(base_size = 14) +
+  theme(
+    panel.background = element_rect(fill = "transparent", colour = NA),
+    plot.background = element_rect(fill = "transparent", colour = NA),
+    legend.background = element_rect(fill = "transparent", colour = NA),
+    text = element_text(family = "Arial", size = 14, colour = "black"),
+    axis.title = element_text(color = "black"),
+    axis.text = element_text(color = "black"),
+    plot.title = element_text(family = "Arial", size = 14, face = "bold", hjust = 0.5)
+  ) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +
+  guides(fill = "none")  # This line removes the legend
+
+print(p)
+
+
+
+ggsave(file.path("results", "04-Enrichment", "Down_enrichment_pathway.png"),
+       p, width = 8, height = 4, units = "in", dpi = 300, bg = "transparent")
+
+ggsave(file.path("results", "04-Enrichment", "Down_enrichment_pathway.pdf"),
+       p, width = 8, height = 4, units = "in", dpi = 300, bg = "transparent")
+
+
+```
+
+
+\newpage
+# Session information
+```{r}
+sessionInfo()
+```
+
