@@ -51,7 +51,7 @@ source(here::here("source", "DEG_functions.R"))
 \newpage
 
 # 1. Read the count data
-In this section, we will read the clean count data from the synaptosomes_miRNARNA folder. The data is stored in the format of `.csv`. We will read the data and filter the columns based on the condition list. The final table will be stored in `results/02-DEG-Vehicle/DESeq2_results.csv`.
+In this section, we will read the clean count data from the synaptosomes_miRNARNA folder. The data is stored in the format of `.csv`. We will read the data and filter the columns based on the condition list. The final table will be stored in `results/02-DEM-Vehicle/DESeq2_results.csv`.
 
 ```{r load_bulkRNA_data}
 counts<- read.csv(here::here("data", "synaptosomes_miRNA", "raw",
@@ -87,7 +87,7 @@ counts<- counts[, rownames(condition_list)]
 miRNA_22q <- c("hsa-miR-185-5p","hsa-miR-185-3p","hsa-miR-1306-5p","hsa-miR-1286")
 
 
-target_miRNA <- c("hsa-miR-185-5p","hsa-miR-214-3p","hsa-miR-128-3p")
+target_miRNA <-  c("hsa-miR-185-5p","hsa-miR-214-3p","hsa-miR-128-3p")
 
 ```
 
@@ -151,25 +151,28 @@ result_df <- results(dds_obj) %>%
   filter(!is.na(padj)) %>%  # Correct way to filter non-NA values
   arrange(padj)
 
+# save the result
+write.csv(result_df, file.path(result_folder, "02-DEM", "01_all_gene_results.csv"),
+          row.names = FALSE)
 
 # Plot the volcano plot for the DEG
 plot_volcano_plot(result_df, 
-                  figure_folder = file.path(result_folder,"02-DEG"),
+                  figure_folder = file.path(result_folder,"02-DEM"),
                   file_name = "02_volcano_plot_log2fc_1",
                   thread = 1 ,dot_size =2, label_gene = NULL)
 
 plot_volcano_plot(result_df, 
-                  figure_folder = file.path(result_folder,"02-DEG"),
+                  figure_folder = file.path(result_folder,"02-DEM"),
                   file_name = "02_volcano_plot_log2fc_1_with_label_miRNA",
                   thread = 1 , dot_size =2, label_gene = target_miRNA)
 
 plot_volcano_plot(result_df, 
-                  figure_folder = file.path(result_folder,"02-DEG"),
+                  figure_folder = file.path(result_folder,"02-DEM"),
                   file_name = "03_volcano_plot_log2fc_1.5",
                   thread = 1.5 ,  dot_size =2,label_gene = NULL)
 
 plot_volcano_plot(result_df, 
-                  figure_folder = file.path(result_folder,"02-DEG"),
+                  figure_folder = file.path(result_folder,"02-DEM"),
                   file_name = "03_volcano_plot_log2fc_1.5_with_label_miRNA",
                   thread = 1.5 , dot_size =2, label_gene = target_miRNA)
 
@@ -185,20 +188,20 @@ DEG_gene_1 <- result_df %>% filter(abs(log2FoldChange) > 1) %>%  pull(GeneName)
 DEG_gene_1.5 <- result_df %>% filter(abs(log2FoldChange) > 1.5) %>% pull(GeneName)
 
 plot_gene_heatmap(vsd_obj, gene_list = DEG_gene_1, 
-                  figure_folder = file.path(result_folder,"02-DEG"),
+                  figure_folder = file.path(result_folder,"02-DEM"),
                   file_name = "02_heatmap_log2fc_1",
                   reference_group, compare_group,
                   cluster_rows = TRUE, cluster_cols = FALSE, 
                   scale = "none")
 plot_gene_heatmap(vsd_obj, gene_list = DEG_gene_1, 
-                  figure_folder = file.path(result_folder,"02-DEG"),
+                  figure_folder = file.path(result_folder,"02-DEM"),
                   file_name = "02_heatmap_log2fc_1_row",
                   reference_group, compare_group,
                   cluster_rows = TRUE, cluster_cols = FALSE, 
                   scale = "row")
 
 plot_gene_heatmap(vsd_obj, gene_list = DEG_gene_1, 
-                  figure_folder = file.path(result_folder,"02-DEG"),
+                  figure_folder = file.path(result_folder,"02-DEM"),
                   file_name = "02_heatmap_log2fc_1",
                   reference_group, compare_group,
                   cluster_rows = TRUE, cluster_cols = FALSE, 
@@ -206,14 +209,14 @@ plot_gene_heatmap(vsd_obj, gene_list = DEG_gene_1,
 
 
 plot_gene_heatmap(vsd_obj, gene_list = DEG_gene_1.5, 
-                  figure_folder = file.path(result_folder,"02-DEG"),
+                  figure_folder = file.path(result_folder,"02-DEM"),
                   file_name = "03_heatmap_log2fc_1.5_row",
                   reference_group, compare_group,
                   cluster_rows = TRUE, cluster_cols = FALSE, 
                   scale = "row")
 
 plot_gene_heatmap(vsd_obj, gene_list = DEG_gene_1.5, 
-                  figure_folder = file.path(result_folder,"02-DEG"),
+                  figure_folder = file.path(result_folder,"02-DEM"),
                   file_name = "03_heatmap_log2fc_1.5",
                   reference_group, compare_group,
                   cluster_rows = TRUE, cluster_cols = FALSE, 
@@ -255,6 +258,39 @@ plot_gene_heatmap(vsd_obj, gene_list = target_miRNA  ,
 
 
 ```
+
+
+
+<!-- \newpage -->
+<!-- ## (4) Target miRNA visualization - Heatmap -->
+<!-- ```{r heatmap_target_miRNA, fig.width=8, fig.height=3} -->
+
+<!-- # Plot the heatmap for the 22q gene -->
+
+<!-- target_miRNA <- target_miRNA_raw -->
+<!-- target_miRNA <-  c("hsa-miR-185-5p","hsa-miR-214-3p","hsa-miR-128-3p") -->
+
+<!-- plot_gene_heatmap(vsd_obj, gene_list = target_miRNA  , -->
+<!--                   figure_folder = file.path(result_folder,"06-Target_miRNA"), -->
+<!--                   file_name = "01_heatmap_Target_gene", -->
+<!--                   reference_group=reference_group, compare_group=compare_group, -->
+<!--                   cluster_rows = FALSE, cluster_cols = FALSE, -->
+<!--                   save = TRUE, -->
+<!--                   fig.height = 3, fig.width = 8, -->
+<!--                   scale = "none", show_rownames =TRUE) -->
+
+<!-- plot_gene_heatmap(vsd_obj, gene_list = target_miRNA  , -->
+<!--                   figure_folder = file.path(result_folder,"06-Target_miRNA"), -->
+<!--                   file_name = "01_heatmap_Target_gene_row", -->
+<!--                   reference_group=reference_group, compare_group=compare_group, -->
+<!--                   cluster_rows = FALSE, cluster_cols = FALSE, -->
+<!--                   save = TRUE, -->
+<!--                   fig.height = 3, fig.width = 8, -->
+<!--                   scale = "row", show_rownames =TRUE) -->
+
+
+<!-- ``` -->
+
 
 
 \newpage
