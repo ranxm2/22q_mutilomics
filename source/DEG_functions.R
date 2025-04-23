@@ -658,6 +658,11 @@ plot_expression_boxplot_4_group<-  function(counts_matrix, condition_list_label,
                 map_signif_level = TRUE,
                 y_position = score_max + 0.6*score_scale) +
     
+    geom_signif(comparisons = list(c(group_1, group_4)),
+                test = "t.test",
+                map_signif_level = TRUE,
+                y_position = score_max + 0.8*score_scale) +
+    
     scale_fill_manual(values = color_palette) +  # Apply custom colors to boxes & scatter dots
     theme_classic(base_family = "Arial") +  # Use Arial font for all text
     labs(title = formatted_title ,  # Use formatted pathway name
