@@ -1,0 +1,11 @@
+﻿cluster,name,marker
+0,Unknown,
+1,Excitatory neuron,"STMN2,RBFOX1,CAMK2A,SYT1"
+2,Deep Layer excitatory neuron,"BCL11B,SATB2"
+3,Oligodendrocytes,"PLP1,PTGDS"
+4,Intermediate prohenitor cells,EOMES
+5,Proliferating neural progenitor cell,"MKI67,TOP2A,"
+6,Astrocytes,"S100B,AQP4"
+7,Outer radial glia,HOPX
+8,Interneuron,"GAD1,GAD2"
+9,Immature preoptic area (pOA) interneurons,"GAD1,LHX1,GAD2"

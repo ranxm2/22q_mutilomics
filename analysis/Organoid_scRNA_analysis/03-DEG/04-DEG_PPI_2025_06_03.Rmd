@@ -1,0 +1,548 @@
+---
+title: "DEG-PPI Analysis"
+author: "Ximing Ran"
+date: "2025-06-03"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: false
+    latex_engine: xelatex
+  html_document:
+    # code_folding: hide
+    toc: true
+    toc_float: true
+hitheme: tomorrow
+highlighter: highlight.js
+
+---
+
+```{r setup, include=FALSE}
+# load libraries
+library(tidyverse)
+library(knitr)
+set.seed(2025)
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 9,
+  fig.height = 4,
+  fig.path = "result/04-DEG_PPI/Analysis_plot/"
+)
+
+theme_set(theme_bw() + theme(legend.position = "bottom"))
+knitr::kable(head(mtcars[, 1:4]), "simple")
+```
+
+```{r}
+library(tibble)
+library(tidyr)
+library(dplyr)
+library(rtracklayer)
+library(dplyr)
+# library(Seurat)
+library(Signac)
+library(EnsDb.Hsapiens.v86)
+library(ggplot2)
+library(cowplot)
+library(simspec)
+library(cowplot)
+library(AnnotationHub)
+library(Seurat)
+library(tidyverse)
+library(openxlsx)
+library(dplyr)
+library(conflicted)
+library(harmony)
+library(data.table)
+library(pheatmap)
+library(ggplot2)
+library(patchwork)
+library(extrafont)
+
+library(knitr)
+library(kableExtra)
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+
+conflict_prefer("filter", "dplyr")  # Prefer dplyr's filter()
+conflict_prefer("lag", "dplyr")     # Prefer dplyr's lag()
+
+```
+
+```{r local_function_load}
+# load function from local files
+# source(here::here("source", "sc_functions.R"))
+```
+
+
+\newpage
+<!-- # 1. Read the merged Data -->
+<!-- ```{r load_merged_data} -->
+<!-- seruat_obj <- readRDS(here::here("data", "synaptosomes_scRNA", "04_merged_with_clustering_4_mannual_correct.rds")) -->
+
+
+<!-- ``` -->
+
+
+<!-- # 2. Plot the UMAP -->
+<!-- ```{r UMAP_plot , fig.width=8, fig.height=5} -->
+<!-- Idents(seruat_obj) <- seruat_obj$seurat_clusters_merge -->
+
+<!-- # swap the Upper layer excitatory neurons  and Excitatory neurons  -->
+<!-- seruat_obj$seurat_clusters_merge <- recode( -->
+<!--   seruat_obj$seurat_clusters_merge, -->
+<!--   "Upper layer excitatory neurons" = "Excitatory neurons", -->
+<!--   "Excitatory neurons" = "Upper layer excitatory neurons" -->
+<!-- ) -->
+
+<!-- seruat_obj$cluster_num <- as.integer(Idents(seruat_obj))-1 -->
+
+
+<!-- # 1. Grab your existing cell-type names -->
+<!-- orig_types <- levels(Idents(seruat_obj)) -->
+<!-- # swap the location of "Upper layer excitatory neurons" and "Excitatory neurons" -->
+<!-- orig_types <- recode( -->
+<!--   orig_types, -->
+<!--   "Upper layer excitatory neurons" = "Excitatory neurons", -->
+<!--   "Excitatory neurons" = "Upper layer excitatory neurons" -->
+<!-- ) -->
+
+<!-- # 2. Build a mapping from cell type → number -->
+<!-- num_map <- setNames(seq_along(orig_types)-1, orig_types) -->
+<!-- map_df <- data.frame( -->
+<!--   cluster_num = seq_along(num_map)-1, -->
+<!--   label = names(num_map), -->
+<!--   anno = paste0(seq_along(num_map)-1, "-", names(num_map)) -->
+<!-- ) -->
+
+
+<!-- seruat_obj$cluster_annot <- factor( -->
+<!--   paste0(seruat_obj$cluster_num, "-", as.character(seruat_obj$seurat_clusters_merge)) -->
+<!-- ) -->
+
+<!-- table(seruat_obj$cluster_annot) -->
+
+<!-- # recode the 22Q into the 22q11DS -->
+
+<!-- seruat_obj$group_annot <- recode( -->
+<!--   seruat_obj$group, -->
+<!--   "22Q" = "22q11DS" -->
+<!-- )  -->
+<!-- # relevel the factor to have CTRL first -->
+<!-- seruat_obj$group_annot <- factor( -->
+<!--   seruat_obj$group_annot, -->
+<!--   levels = c("CTRL", "22q11DS") -->
+<!-- ) -->
+
+
+<!-- Idents(seruat_obj) <- "cluster_annot" -->
+
+<!-- # 5. Base UMAP (no labels) with transparent backgrounds -->
+<!-- umap_plot <- DimPlot( -->
+<!--   seruat_obj, -->
+<!--   reduction = "umap", -->
+<!--   # group.by = "cluster_annot",  -->
+<!--   # split.by = "group_annot", -->
+<!--   label   = FALSE, -->
+<!--   repel   = TRUE -->
+<!-- )  -->
+
+<!-- # subset the part before the - -->
+<!-- umap_plot$data$num <- sub("-.*", "", umap_plot$data$ident) -->
+<!-- umap_plot$data$num <- factor(umap_plot$data$num, levels = seq(0, 9)) -->
+
+<!-- # 3) Call LabelClusters with id = "ident" -->
+<!-- umap_plot_labeled <- LabelClusters( -->
+<!--   plot     = umap_plot, -->
+<!--   id       = "num",   # the data column that holds "0".."9" -->
+<!--   # clusters = src,       # which groups to annotate -->
+<!--   # labels   = anno,      # what text to put in place of each "0".."9" -->
+<!--   repel    = FALSE, -->
+<!--   size     = 4 -->
+<!-- )  -->
+
+<!-- umap_plot_labeled <- umap_plot_labeled + -->
+<!--   theme( -->
+<!--     panel.background  = element_rect(fill = "transparent", colour = NA), -->
+<!--     plot.background   = element_rect(fill = "transparent", colour = NA), -->
+<!--     legend.background = element_rect(fill = "transparent", colour = NA) -->
+<!--   ) -->
+
+
+<!-- ggsave( -->
+<!--   filename = "result/04-DEG_PPI/UMAP_labeled_annotated_all.png", -->
+<!--   plot     = umap_plot_labeled, -->
+<!--   width    = 8, -->
+<!--   height   = 5, -->
+<!--   dpi      = 300, -->
+<!--   bg       = "transparent"   # <-- this makes the PNG background transparent -->
+<!-- ) -->
+
+<!-- # save to pdf -->
+<!-- ggsave( -->
+<!--   filename = "result/04-DEG_PPI/UMAP_labeled_annotated_all.pdf", -->
+<!--   plot     = umap_plot_labeled, -->
+<!--   width    = 8, -->
+<!--   height   = 5 -->
+<!-- ) -->
+
+<!-- print(umap_plot_labeled) -->
+<!-- ``` -->
+
+<!-- ```{r UMAP_plot_group , fig.width=12, fig.height=5} -->
+<!-- # 4. Use the new annotated factor as your Idents() -->
+<!-- Idents(seruat_obj) <- "cluster_annot" -->
+
+<!-- # 5. Base UMAP (no labels) with transparent backgrounds -->
+<!-- umap_plot <- DimPlot( -->
+<!--   seruat_obj, -->
+<!--   reduction = "umap", -->
+<!--   # group.by = "cluster_annot",  -->
+<!--   split.by = "group_annot", -->
+<!--   label   = FALSE, -->
+<!--   repel   = TRUE -->
+<!-- )  -->
+
+<!-- # subset the part before the - -->
+<!-- umap_plot$data$num <- sub("-.*", "", umap_plot$data$ident) -->
+<!-- umap_plot$data$num <- factor(umap_plot$data$num, levels = seq(0, 9)) -->
+
+<!-- # 3) Call LabelClusters with id = "ident" -->
+<!-- umap_plot_labeled <- LabelClusters( -->
+<!--   plot     = umap_plot, -->
+<!--   id       = "num",   # the data column that holds "0".."9" -->
+<!--   # clusters = src,       # which groups to annotate -->
+<!--   # labels   = anno,      # what text to put in place of each "0".."9" -->
+<!--   repel    = FALSE, -->
+<!--   size     = 4 -->
+<!-- )  -->
+
+<!-- umap_plot_labeled <- umap_plot_labeled + -->
+<!--   theme( -->
+<!--     panel.background  = element_rect(fill = "transparent", colour = NA), -->
+<!--     plot.background   = element_rect(fill = "transparent", colour = NA), -->
+<!--     legend.background = element_rect(fill = "transparent", colour = NA) -->
+<!--   ) -->
+
+<!-- ggsave( -->
+<!--   filename = "result/04-DEG_PPI/UMAP_labeled_annotated.png", -->
+<!--   plot     = umap_plot_labeled, -->
+<!--   width    = 12, -->
+<!--   height   = 5, -->
+<!--   dpi      = 300, -->
+<!--   bg       = "transparent"   # <-- this makes the PNG background transparent -->
+<!-- ) -->
+
+<!-- # save to pdf -->
+<!-- ggsave( -->
+<!--   filename = "result/04-DEG_PPI/UMAP_labeled_annotated.pdf", -->
+<!--   plot     = umap_plot_labeled, -->
+<!--   width    = 12, -->
+<!--   height   = 5 -->
+<!-- ) -->
+
+<!-- print(umap_plot_labeled) -->
+<!-- ``` -->
+
+
+<!-- # 3. DEG analysis -->
+<!-- ```{r DEG_analysis} -->
+<!-- # #  -->
+<!-- # # table(seruat_obj$seurat_clusters_merge, seruat_obj$cluster_num) -->
+<!-- # # table(seruat_obj$seurat_clusters_merge, seruat_obj$cluster_annot) -->
+<!-- #  -->
+<!-- # ####################### cluster DEG -->
+<!-- # seruat_obj$orig.group <- ifelse(  seruat_obj$orig.ident %in% c("C1", "C2"), "CTRL", "22q") -->
+<!-- # seruat_obj$deg_group <- paste0(seruat_obj$orig.group, "_", seruat_obj$seurat_clusters_merge) -->
+<!-- # # table(seruat_obj$deg_group) -->
+<!-- #  -->
+<!-- # DefaultAssay(seruat_obj )<- "RNA" -->
+<!-- # Idents(seruat_obj) <- "deg_group" -->
+<!-- #  -->
+<!-- # deg_list<- list() -->
+<!-- # for (index in 1:nrow(map_df)) { -->
+<!-- #   cl <- map_df$label[index] -->
+<!-- #   anno <- map_df$anno[index] -->
+<!-- #   g1 <- paste0("CTRL_", cl) -->
+<!-- #   g2 <- paste0("22q_", cl) -->
+<!-- #   deg <- FindMarkers(seruat_obj, ident.1 = g1, ident.2 = g2) -->
+<!-- #   deg$cluster <- cl -->
+<!-- #   deg$gene <- rownames(deg) -->
+<!-- #   # add deg to the list -->
+<!-- #   deg_list[[anno]] <- deg -->
+<!-- # } -->
+<!-- #  -->
+<!-- # # make. avg_log2FC the -avg_log2FC -->
+<!-- # deg_list <- lapply(deg_list, function(deg){ -->
+<!-- #   deg$avg_log2FC <- -deg$avg_log2FC -->
+<!-- #   deg -->
+<!-- # }) -->
+<!-- #  -->
+<!-- #  -->
+<!-- # library(stringr) -->
+<!-- # # assume deg_list is a named list, one element per cluster -->
+<!-- # old_names <- names(deg_list) -->
+<!-- # # truncate every name to at most 31 characters (no “…”) -->
+<!-- # new_names <- str_trunc(old_names, width = 31, side = "right", ellipsis = "") -->
+<!-- # names(deg_list) <- new_names -->
+<!-- #  -->
+<!-- # # now write -->
+<!-- # openxlsx::write.xlsx( -->
+<!-- #   deg_list, -->
+<!-- #   "result/04-DEG_PPI/cluster_DEGs.xlsx" -->
+<!-- # ) -->
+<!-- #  -->
+<!-- # # save it to rds -->
+<!-- # saveRDS(deg_list, file = "result/04-DEG_PPI/DEG_list.rds") -->
+<!-- ``` -->
+
+
+```{r DEG_summary, fig.width=8, fig.height=4}
+deg_list <- readRDS("result/04-DEG_PPI/DEG_list.rds")
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(purrr)
+
+# your vector of logFC cutoffs
+logFCs <- c( 0.25, 0.5, 1)
+
+for (th in logFCs) {
+  
+# 1. tally up/down per cluster at this threshold
+counts_df <- imap_dfr(deg_list, ~{
+  df2 <- .x %>%
+    filter(p_val_adj < 0.05, abs(avg_log2FC) > th)
+  tibble(
+    cluster = .y,
+    up      = sum(df2$avg_log2FC >  0, na.rm = TRUE),
+    down    = sum(df2$avg_log2FC <  0, na.rm = TRUE)
+  )
+})
+
+# 2. pivot longer and make 'down' negative
+counts_long <- counts_df %>%
+  pivot_longer(c(up, down), names_to = "direction", values_to = "n") %>%
+  mutate(
+    n         = ifelse(direction == "down", -n, n),
+    direction = factor(direction, levels = c("down","up"))
+  )
+
+
+# 3) In your counts_long DF, extract the same short prefix.*", "", counts_long$cluster)
+counts_long$cluster <-  substr(counts_long$cluster, 1, 1)
+
+# turn it into a factor
+counts_long$cluster <- factor(counts_long$cluster)
+# reverse the order so it matches the original
+counts_long$cluster <- factor(counts_long$cluster, levels = rev(levels(counts_long$cluster)))
+ 
+
+# 3. build the plot
+p<- ggplot(counts_long, aes(x = n, y = cluster, fill = direction)) +
+  geom_col(width = 0.7) +
+  geom_text(
+    aes(
+      x     = n,
+      label = abs(n),
+      hjust = ifelse(direction == "up", -0.1, 1.1)
+    ),
+    size = 5
+  ) +
+  # 
+  # geom_point(
+  #   aes(x = x, y = y, color = as.factor(label)),
+  #   data = data.frame(x = -3500, y = 1:10,   label = 9:0),
+  #   size = 7,
+  #   show.legend = FALSE,
+  #   inherit.aes = FALSE
+  # ) +
+  # geom_text(
+  #   aes(x = x, y = y, label = label),
+  #   data = data.frame(x = -3500, y = 1:10,   label = 9:0),
+#   size = 3,
+#   show.legend = FALSE,
+#   inherit.aes = FALSE
+# ) +
+# reverse the default hue order
+scale_color_hue(direction = -1) +
+  scale_x_continuous(
+    labels = abs,
+    expand = expansion(add = c(max(abs(counts_long$n)) * 0.2,
+                               max(abs(counts_long$n)) * 0.2))
+  ) +
+  scale_fill_manual(
+    values = c(down = "steelblue", up = "firebrick"),
+    labels = c("Down-regulated", "Up-regulated")
+  ) +
+  labs(
+    x    = "Number of DE genes",
+    y    = NULL,
+    fill = "Direction"
+  ) +
+  theme_bw(base_size = 14, base_family = "Arial") +
+  theme(
+    legend.position  = "top",
+    axis.text.y      = element_text(size = 14),  # no need to set color unless you want to
+    panel.border     = element_rect(color = "black", fill = NA),
+    plot.margin      = margin(5, 30, 5, 5, "pt")
+  )+
+  # scale_y_discrete(labels = NULL)+
+  coord_cartesian(clip = "off")
+print(p)
+
+ggsave(
+  filename = paste0("result/04-DEG_PPI/diverging_bar_logFC_", th, "_DEG.png"),
+  plot     = p,
+  width    = 8, 
+  height   = 6,
+  dpi      = 300
+)
+
+ggsave(
+  filename = paste0("result/04-DEG_PPI/diverging_bar_logFC_", th, "_DEG.pdf"),
+  plot     = p,
+  width    = 8, 
+  height   = 6
+)
+
+
+}
+
+
+
+
+
+
+
+```
+
+
+
+## DEG for Upper layer excitatory neurons 
+
+<!-- ```{r DEG_upper_layer_excitatory_neurons, fig.width=10, fig.height=8} -->
+<!-- DEG_upper<- deg_list[["1-Upper layer excitatory neuron"]] -->
+
+<!-- # filter padj < 0.05 and abs(avg_log2FC) > 0.25 -->
+<!-- DEG_upper <- DEG_upper %>% -->
+<!--   filter(p_val_adj < 0.05 & abs(avg_log2FC) > 0.25) -->
+
+<!-- # table the sign of up_regulated and down_regulated -->
+<!-- table(DEG_upper$avg_log2FC > 0) -->
+<!-- DEG_upper_genes <- rownames(DEG_upper) -->
+
+
+
+<!-- library(dplyr) -->
+<!-- library(purrr) -->
+<!-- library(gprofiler2) -->
+
+
+<!-- # Enrichment analysis for all DEGs -->
+<!-- # Enrichment_uppper <-  gost(DEG_upper_genes, organism = "hsapiens", -->
+<!-- #                      correction_method = "fdr", evcodes = TRUE) -->
+
+<!-- # result <- dplyr::select(Enrichment_uppper $result, -parents) -->
+<!-- # save the result -->
+<!-- # write.csv(result, "result/04-DEG_PPI/Enrichment_upper_layer_excitatory_neurons.csv", row.names = FALSE) -->
+
+<!-- result <- read.csv("result/04-DEG_PPI/Enrichment_upper_layer_excitatory_neurons.csv") -->
+
+<!-- go_id_list <- c("GO:0007268","GO:0099536","GO:0099537") -->
+<!-- result <- result %>% -->
+<!--   filter(!is.na(term_name) & term_id %in% go_id_list) %>% -->
+<!--   arrange(p_value) -->
+
+<!-- library(tidyverse) -->
+<!-- library(STRINGdb) -->
+<!-- library(data.table) -->
+<!-- library(tidygraph) -->
+<!-- library(ggraph) -->
+<!-- library(RColorBrewer) -->
+
+<!-- string.db <- STRINGdb$new(version = "11.5", species = 9606, -->
+<!--                           score_threshold = 400, network_type = "full", -->
+<!--                           input_directory = "") -->
+<!-- evidence <- fread("https://stringdb-static.org/download/protein.links.full.v11.5/9606.protein.links.full.v11.5.txt.gz") -->
+
+
+
+<!-- for (go_index in 1:nrow(result)){ -->
+<!--   go_genes <- unlist(strsplit(result$intersection[go_index], ",")) -->
+<!--   print(sprintf("GO term: %s, with %d genes",  -->
+<!--                 result$term_name[go_index],  -->
+<!--                 length(go_genes))) -->
+<!--   deg<-DEG_upper %>% -->
+<!--     filter(gene %in% go_genes) %>% -->
+<!--     arrange(desc(avg_log2FC)) -->
+
+
+<!--  # map gene name to id -->
+<!--     gene.map.res <- string.db$map(deg, "gene") -->
+<!--     ppi <- string.db$get_interactions(gene.map.res$STRING_id) -->
+
+<!--     # get evidence -->
+<!--     link <- evidence[protein1 %in% gene.map.res$STRING_id & -->
+<!--                        protein2 %in% gene.map.res$STRING_id & combined_score >= 400] -->
+
+<!--     # protein as node, evidence as edge -->
+<!--     link$p1 <- gene.map.res$gene[match(link$protein1, gene.map.res$STRING_id)] -->
+<!--     link$p2 <- gene.map.res$gene[match(link$protein2, gene.map.res$STRING_id)] -->
+<!--     link$id <- sapply(1:nrow(link), function(i){ -->
+<!--       paste(sort(c(link[i,]$p1, link[i,]$p2)), collapse = ",") -->
+<!--     }) -->
+<!--     link <- link[!duplicated(link$id),] -->
+
+<!--     # use only first half of the link data -->
+<!--     lapply(1:nrow(link), function(i){ -->
+<!--       n_edge <- sum(link[i,c("textmining", "database", "experiments",  -->
+<!--                              "coexpression", "neighborhood", "fusion",  -->
+<!--                              "cooccurence")] > 0) -->
+
+<!--       rep(c(link[i,]$p1, link[i,]$p2), n_edge) -->
+<!--     }) %>% unlist() -> edges -->
+
+<!--     matrix(edges, ncol = 2, byrow = T) %>% as.data.frame() -> ppi_edges -->
+<!--     colnames(ppi_edges) <- c("from", "to") -->
+
+<!--     deg %>% -->
+<!--       filter(gene %in% edges[!duplicated(edges)]) %>% -->
+<!--       dplyr::select(gene, avg_log2FC) -> nodes -->
+<!--     g <- tbl_graph(nodes = nodes, node_key = "gene", edges = ppi_edges, directed = F) -->
+
+<!--     ggraph(g) + -->
+<!--       geom_edge_fan(color = "gray", alpha = 0.5) + -->
+<!--       geom_node_point( -->
+<!--         aes(color = avg_log2FC), -->
+<!--         # color = brewer.pal(9, "Reds")[5],  -->
+<!--         # shape = 18, -->
+<!--         size = 8 -->
+<!--       ) + -->
+<!--       scale_color_gradient2(low = brewer.pal(9, "Blues")[7], -->
+<!--                             high = brewer.pal(9, "Reds")[7]) + -->
+<!--       geom_node_text(aes(label = gene), -->
+<!--                      fontface = "bold", repel = T) + -->
+<!--       theme_graph(base_family = "Arial", -->
+<!--                   fg_text_colour = 'white') -> p -->
+
+
+<!-- # save the plot -->
+<!--     ggsave(p, -->
+<!--       filename = paste0("result/04-DEG_PPI/GO_plot/Upper layer excitatory neuron/GO_", result$term_name[go_index], ".png"), -->
+<!--       width = 10, height = 8, dpi = 300, bg = "transparent" -->
+<!--     ) -->
+<!--     ggsave(p, -->
+<!--       filename = paste0("result/04-DEG_PPI/GO_plot/Upper layer excitatory neuron/GO_", result$term_name[go_index], ".pdf"), -->
+<!--       width = 10, height = 8 -->
+<!--     ) -->
+<!-- } -->
+
+
+
+<!-- ``` -->
+

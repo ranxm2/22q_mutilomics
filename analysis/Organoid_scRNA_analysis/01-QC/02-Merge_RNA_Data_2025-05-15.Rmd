@@ -1,0 +1,204 @@
+---
+title: "Merge RNA Data"
+subtitle: ""
+author: "Ximing Ran"
+date: "2025-05-15"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: false
+  html_document:
+    # code_folding: hide
+    toc: true
+    toc_float: true
+hitheme: tomorrow
+highlighter: highlight.js
+
+---
+
+```{r setup, include=FALSE}
+# load libraries
+library(tidyverse)
+library(knitr)
+library(Seurat)
+library(tidyverse)
+
+
+set.seed(2025)
+
+knitr::opts_chunk$set(
+  # echo = FALSE,
+  # warning = FALSE,
+  # message = FALSE,
+  fig.width = 9,
+  fig.height = 4,
+  fig.path = "./results/Merge-RNA-analysis-plot-anchor/ANalysis_plot/"
+)
+
+theme_set(theme_bw() + theme(legend.position = "bottom"))
+knitr::kable(head(mtcars[, 1:4]), "simple")
+```
+
+
+
+
+```{r local_function_load}
+# load function from local files
+
+```
+
+
+```{r local_reference_load}
+# load data from local files
+
+
+```
+
+
+\newpage
+
+# 1. Read the QC Data
+
+
+```{r load_data_TSC}
+options(Seurat.object.assay.version = "v5")
+
+# load data
+sample_seurat_list <- readRDS(
+  here::here("data","synaptosomes_scRNA",
+             "sample_seurat_RNA_list_2025-05-15.rds")
+)
+
+sample_meta <- readRDS(
+  here::here("data", "synaptosomes_scRNA",
+             "sample_meta_RNA_2025-05-15.rds")
+)
+
+# delect the Q3 and C3
+# sample_seurat_list <- sample_seurat_list[!names(sample_seurat_list) %in% c("Q3", "C3")]
+# sample_meta <- sample_meta[!sample_meta %in% c("Q3", "C3")]
+
+
+for (samp in names(sample_seurat_list)) {
+  cat("Sample:", samp, "\n")
+  print(head(colnames(sample_seurat_list[[samp]]), 10))
+  cat("\n")
+}
+
+
+```
+
+\newpage
+# 2. Merge the data
+
+
+
+
+```{r merge_samples, fig.width=12, fig.height=8}
+library(Seurat)
+library(harmony)
+library(Signac)
+library(GenomicRanges)
+library(dplyr)
+
+names(sample_seurat_list) <- sample_meta
+
+# 1) Pre-process each sample’s RNA (normalize -> HVG -> scale -> PCA)
+
+# sample_seurat_list <- lapply(sample_seurat_list, function(obj) {
+#   DefaultAssay(obj) <- "RNA"
+#   obj %>%
+#     NormalizeData(assay = "RNA", layer = "counts.Gene Expression") %>%
+#     FindVariableFeatures(assay = "RNA", layer = "counts.Gene Expression", 
+#                          nfeatures = 3000) %>%
+#     ScaleData(assay = "RNA", layer = "counts.Gene Expression") %>%
+#     RunPCA(assay = "RNA", reduction.name = "pca", npcs = 50)
+# })
+# 
+# print("PCA done")
+
+# # 1. Compute the overlap of feature names across your list
+# common_genes <- Reduce(
+#   intersect,
+#   lapply(sample_seurat_list, function(obj) {
+#     rownames(obj[["RNA"]]) 
+#   })
+# )
+# 
+# # 2. Subset each Seurat object to only those shared genes
+# sample_seurat_list <- lapply(sample_seurat_list, function(obj) {
+#   subset(obj, features = common_genes)
+# })
+# 
+
+
+
+# normalize data, find variable genes, scale data, run PCA
+sample_seurat_list %>%
+  lapply(., function(obj) {
+    obj %>%
+      NormalizeData() %>%
+      FindVariableFeatures(nfeatures = 3000) %>%
+      ScaleData() %>%
+      RunPCA()
+  }) -> sample_seurat_list
+
+# select integration features (genes)
+# integration_features <- SelectIntegrationFeatures(sample_seurat_list,
+#                                                   nfeatures = 2000
+# )
+integration_features <- SelectIntegrationFeatures(
+  object.list = sample_seurat_list,
+  nfeatures    = 1000
+)
+
+
+# sample_seurat_list <- lapply(sample_seurat_list, function(obj) {
+#   obj <- ScaleData(obj, features = integration_features, verbose = FALSE)
+#   obj <- RunPCA(obj,     features = integration_features, verbose = FALSE)
+#   obj
+# })
+
+
+# integrate data
+integration_anchors <- 
+  FindIntegrationAnchors(sample_seurat_list,
+                         anchor.features = integration_features,
+                         reduction = "rpca"
+                        )
+
+# cleen up the memory with merged and sample_seurat_list
+rm(sample_seurat_list)
+rm(merged)
+merged <- IntegrateData(integration_anchors)
+
+DefaultAssay(merged) <- "integrated"
+
+merged %>%
+  ScaleData() %>%
+  RunPCA(npcs = 50) %>%
+  RunUMAP(reduction = "pca", dims = 1:50) -> merged
+
+DimPlot(merged,
+        group.by = "orig.ident", label = T)
+
+
+
+
+
+
+# save the data
+saveRDS(merged, here::here("data", "synaptosomes_scRNA", "merged_RNA_2025-05-15.rds"),
+        compress = FALSE)
+```
+
+
+
+\newpage
+# Session Info
+
+```{r session_info}
+sessionInfo()
+
+

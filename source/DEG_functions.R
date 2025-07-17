@@ -183,7 +183,16 @@ plot_volcano_plot <- function(result_df, figure_folder, file_name,
                               fig.width = 8, fig.height = 8){
   
   result_df <- result_df  %>% filter(!is.na(padj))
-  max_p  <- max(-log10(result_df$padj), na.rm = TRUE)
+  # max_p  <- max(-log10(result_df$padj), na.rm = TRUE)
+  
+  # Replace padj = 0 with a small value before log transformation
+  result_df$padj[result_df$padj == 0] <- 1e-300
+  
+  # Now take -log10 safely
+  neg_log_padj <- -log10(result_df$padj)
+  max_p  <- max(neg_log_padj, na.rm = TRUE)
+  
+  
   max_fc <- max(abs(result_df$log2FoldChange), na.rm = TRUE)
   
   
@@ -363,6 +372,7 @@ Enrichment_analysis <- function(gene_list, result_folder,
     dplyr::select(term, p_value) %>%
     arrange(p_value) %>%   # Sort p_value from smallest to largest
     slice_head(n = 30) %>%
+    mutate(term = make.unique(term)) %>%
     mutate(term = factor(term, levels = rev(term)))     # Select the top 30 smallest p-values
   
   p<-ggplot(result_df_30, aes(x = term, y = -log10(p_value), fill = -log10(p_value))) +
@@ -388,13 +398,13 @@ Enrichment_analysis <- function(gene_list, result_folder,
           plot.title = element_text(family = "Arial", size = 14, face = "bold", hjust = 0.5)) +
     geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black")
   
-  print(p)
-  ggsave(file.path(result_folder,
-                   paste0(file_name, "_top30_pathways.png")), p,
-         width = 12, height = 8, units = "in", dpi = 300)
-  ggsave(file.path(result_folder, 
-                   paste0(file_name, "_top30_pathways.pdf")), p,
-         width = 12, height = 8, units = "in")
+  # print(p)
+  # ggsave(file.path(result_folder,
+  #                  paste0(file_name, "_top30_pathways.png")), p,
+  #        width = 12, height = 8, units = "in", dpi = 300)
+  # ggsave(file.path(result_folder, 
+  #                  paste0(file_name, "_top30_pathways.pdf")), p,
+  #        width = 12, height = 8, units = "in")
   
   print(sprintf("Enrichment analysis for GOBP %s ", file_name))
   result_GOBP <- result %>% filter(source == "GO:BP")
@@ -406,6 +416,8 @@ Enrichment_analysis <- function(gene_list, result_folder,
     dplyr::select(term, p_value) %>%
     arrange(p_value) %>%   # Sort p_value from smallest to largest
     slice_head(n = 30)%>%
+    
+    mutate(term = make.unique(term)) %>%
     mutate(term = factor(term, levels = rev(term)))    # Select the top 30 smallest p-values
   
   p<-ggplot(result_df_30_GOBP, aes(x = term, y = -log10(p_value), fill = -log10(p_value))) +
@@ -662,6 +674,91 @@ plot_expression_boxplot_4_group<-  function(counts_matrix, condition_list_label,
                 test = "t.test",
                 map_signif_level = TRUE,
                 y_position = score_max + 0.8*score_scale) +
+    
+    scale_fill_manual(values = color_palette) +  # Apply custom colors to boxes & scatter dots
+    theme_classic(base_family = "Arial") +  # Use Arial font for all text
+    labs(title = formatted_title ,  # Use formatted pathway name
+         x = "",  # Remove x-axis label
+         y ="Normalized Expression" ) +
+    theme(
+      legend.position = "none",  # Optional: to hide the legend
+      plot.title = element_text(hjust = 0.5, size=15, color = "black" ),  # Align title to the left
+      axis.text.x = element_text(size = 15, angle=45, hjust=1, color = "black" ),
+      axis.text.y = element_text(size = 15, color = "black"),
+      title = element_text(size = 15, color = "black"),
+      panel.background = element_rect(fill = "transparent", color = NA),  # Transparent panel background
+      plot.background = element_rect(fill = "transparent", color = NA)    # Transparent plot background
+    )
+  
+  if (save){
+    
+    ggsave(file.path(figure_folder, paste0(file_name, ".png")), p,
+           width = fig.width, height = fig.height, units = "in", dpi = 300)
+    ggsave(file.path(figure_folder, paste0(file_name, ".pdf")), p,
+           width = fig.width, height = fig.height, units = "in")}
+  
+  return(p)
+  
+}
+
+
+
+
+plot_expression_boxplot_4_group_mirna<-  function(counts_matrix, condition_list_label, feature,
+                                            figure_folder, file_name, 
+                                            fig.height = 6, fig.width = 4,
+                                            save=TRUE,
+                                            group_1=NULL, group_2=NULL, group_3=NULL, group_4=NULL){
+  
+  # Sample list sub
+  sample_info <- condition_list_label %>%
+    mutate(sample = rownames(.)) %>%
+    filter(group %in% c(group_1, group_2, group_3, group_4))
+  
+  # Convert counts_matrix to a data frame and reshape
+  plot_df <- as.data.frame(counts_matrix) %>%
+    rownames_to_column(var = "expression") %>%
+    filter(expression == feature) %>%  # Select the specific pathway
+    pivot_longer(cols = -expression, names_to = "sample", values_to = "Normalized_Expression") %>%
+    dplyr::select(-expression)  %>% 
+    filter(sample %in% sample_info$sample)  %>%
+    left_join(sample_info, by = "sample")   %>% 
+    mutate(group = factor(group, levels = c(group_1, group_2, group_3, group_4)) )  # Define the factor levels
+  
+  
+  # Ensure colors are mapped to exact group names
+  color_palette <- setNames(c("#BAE3DC", "#F6B3AC", "#8DD2C5","#f47f72"),
+                            c(group_1, group_2, group_3, group_4))
+  
+  
+  # Process pathway name: remove first part, capitalize first letter, replace underscores with spaces
+  formatted_title <- feature 
+  
+  
+  score_max <- max(plot_df$Normalized_Expression)
+  score_scale <- abs(max(plot_df$Normalized_Expression) - min(plot_df$Normalized_Expression))*0.5
+  
+  
+  # Create the box plot with scatter overlay
+  p<-ggplot(plot_df, aes(x = group, y = Normalized_Expression)) +
+    geom_boxplot(aes(fill = group), alpha = 0.9, outlier.shape = NA, color = "black") +  # Box plot with fill color
+    geom_jitter(aes(fill = group), shape = 21, width = 0.2, size = 3, alpha = 0.9, color = "black") +  # Scatter points with fill color
+    # stat_summary(fun = mean, geom = "point", shape = 18, size = 4, color = "black") +  # Mean point
+    geom_signif(comparisons = list(c(group_1, group_2),
+                                   c(group_3, group_4)),
+                test = "t.test",
+                map_signif_level = TRUE,
+                y_position = c(score_max + 0.2*score_scale, score_max + 0.2*score_scale)) +
+    geom_signif(comparisons = list(c(group_1, group_3)),
+                test = "t.test",
+                map_signif_level = TRUE,
+                y_position = score_max + 0.4*score_scale) +
+    
+    geom_signif(comparisons = list(c(group_2, group_4)),
+                test = "t.test",
+                map_signif_level = TRUE,
+                y_position = score_max + 0.6*score_scale) +
+    
     
     scale_fill_manual(values = color_palette) +  # Apply custom colors to boxes & scatter dots
     theme_classic(base_family = "Arial") +  # Use Arial font for all text

@@ -1,0 +1,167 @@
+---
+title: "Cell Type Anotation"
+subtitle: "Cell type annotation with clustering"
+author: "Ximing Ran"
+date: "2025-05-15"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: false
+  html_document:
+    # code_folding: hide
+    toc: true
+    toc_float: true
+hitheme: tomorrow
+highlighter: highlight.js
+
+---
+
+```{r setup, include=FALSE}
+# load libraries
+library(tidyverse)
+library(knitr)
+set.seed(2025)
+
+knitr::opts_chunk$set(
+  # echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 9,
+  fig.height = 4,
+  fig.path = "result/01-Clustering/Clustering_plot/"
+)
+
+theme_set(theme_bw() + theme(legend.position = "bottom"))
+knitr::kable(head(mtcars[, 1:4]), "simple")
+```
+
+```{r}
+library(tibble)
+library(tidyr)
+library(dplyr)
+library(rtracklayer)
+library(dplyr)
+library(Seurat)
+library(EnsDb.Hsapiens.v86)
+library(ggplot2)
+library(cowplot)
+library(simspec)
+library(cowplot)
+library(AnnotationHub)
+library(Seurat)
+library(tidyverse)
+library(openxlsx)
+library(dplyr)
+library(conflicted)
+library(harmony)
+library(data.table)
+library(pheatmap)
+library(ggplot2)
+library(patchwork)
+
+conflict_prefer("filter", "dplyr")  # Prefer dplyr's filter()
+conflict_prefer("select", "dplyr")  # Prefer dplyr's filter()
+conflict_prefer("lag", "dplyr")     # Prefer dplyr's lag()
+
+```
+
+
+
+```{r local_function_load}
+# load function from local files
+source(here::here("source", "sc_functions.R"))
+```
+
+
+
+
+\newpage
+# 1. Read the merged Data
+```{r load_merged_data}
+seurat_obj <- readRDS(here::here("data", "synaptosomes_scRNA", "merged_RNA_2025-05-15.rds"))
+# seurat_obj<- JoinLayers(seurat_obj)
+```
+
+\newpage
+# 2. Culstering
+
+```{r clustering_res, fig.width=6, fig.height=6}
+
+# create a directory to save the results
+dir.create("result/01-Clustering/umap_plot", recursive = TRUE, showWarnings = FALSE)
+
+# ct_label <- read.csv(here::here("data", "processed-data", "ct_mannual_2025-04-09.csv"), row.names = 1)
+# gene_list_clean <- unlist(strsplit(ct_label$marker, ","))           # Split by comma
+# gene_list_clean <- unique(trimws(gene_list_clean))            # Trim whitespace, remove duplicates
+# gene_list_clean <- gene_list_clean[gene_list_clean != ""]  
+
+
+seurat_obj %>%
+  FindNeighbors() %>%
+  FindClusters(resolution = seq(0.1, 0.5, 0.1)) -> seurat_obj
+
+# save the seurat object
+saveRDS(seurat_obj, file = here::here("data", "synaptosomes_scRNA", "seurat-cluster_2025-05-15.rds"))
+
+
+
+#### Run clustering res from 0.1 to 0.5 ####
+for (res in seq(0.1, 0.5, by = 0.1)) {
+
+  
+  resolution <- sprintf("integrated_snn_res.%s", res)
+  seurat_obj$seurat_clusters <- seurat_obj[[resolution]]
+  Idents(seurat_obj) <-   seurat_obj$seurat_clusters
+  dir.create(sprintf("result/01-Clustering/umap_plot/res_%s", res), recursive = TRUE, showWarnings = FALSE)
+  
+  
+  p <- DimPlot(seurat_obj, 
+               reduction = "umap", 
+               group.by = "seurat_clusters", label = TRUE) +
+    ggtitle(paste("Resolution:", res)) +
+    theme(legend.position = "none")
+  
+  print(p)
+  print(sprintf("Resolution: %s", res))
+  print(table(seurat_obj$seurat_clusters))
+  
+
+  # Merge all your per-sample layers into counts/data/scale.data…
+  seurat_obj_marker <- JoinLayers(seurat_obj, assay = "RNA")
+
+  FindAllMarkers(seurat_obj_marker, assay = "RNA", only.pos = T, densify = T) -> cluster.markers
+  
+  write.csv(cluster.markers, file = sprintf("result/01-Clustering/umap_plot/res_%s/cluster_markers_res_%s.csv", res, res), row.names = TRUE)
+    
+  dir.create(sprintf("result/01-Clustering/umap_plot/res_%s", res), recursive = TRUE, showWarnings = FALSE)
+  
+  ggsave(sprintf("result/01-Clustering/umap_plot/res_%s/umap_res_%s.png", res, res), plot = p, width = 8, height = 6)
+  ggsave(sprintf("result/01-Clustering/umap_plot/res_%s/umap_res_%s.pdf", res, res), plot = p, width = 8, height = 6)
+
+  # for(index in 1:length(gene_list_clean )){
+  # gene <- gene_list_clean[index]
+  # file_path <- sprintf("result/01-Clustering/umap_plot/res_%s/%02d_%s", res, index, gene)
+  # p <- plot_sc_feature(seurat_obj, res = res, features = gene, save = TRUE,
+  #                       group_by = "seurat_clusters",
+  #                       group_by_label = sprintf("seurat_clusters_%s", res),
+  #                       reduction_label = "umap",
+  #                       output_prefix = file_path)
+  # }
+
+}
+
+
+```
+
+\newpage
+
+
+
+
+\newpage
+Session Information
+```{r session_info}
+sessionInfo()
+```
+

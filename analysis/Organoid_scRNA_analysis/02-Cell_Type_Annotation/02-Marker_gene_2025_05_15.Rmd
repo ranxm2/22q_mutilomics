@@ -1,0 +1,587 @@
+---
+title: "Cell Type Anotation"
+subtitle: "Cluster Marker"
+author: "Ximing Ran"
+date: "2025-05-15"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: false
+  html_document:
+    # code_folding: hide
+    toc: true
+    toc_float: true
+hitheme: tomorrow
+highlighter: highlight.js
+
+---
+
+```{r setup, include=FALSE}
+# load libraries
+library(tidyverse)
+library(knitr)
+set.seed(2025)
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 9,
+  fig.height = 4,
+  fig.path = "result/02-Cluster-Marker/Analysis_plot/"
+)
+
+theme_set(theme_bw() + theme(legend.position = "bottom"))
+knitr::kable(head(mtcars[, 1:4]), "simple")
+```
+
+```{r}
+library(tibble)
+library(tidyr)
+library(dplyr)
+library(rtracklayer)
+library(dplyr)
+# library(Seurat)
+library(Signac)
+library(EnsDb.Hsapiens.v86)
+library(ggplot2)
+library(cowplot)
+library(simspec)
+library(cowplot)
+library(AnnotationHub)
+library(Seurat)
+library(tidyverse)
+library(openxlsx)
+library(dplyr)
+library(conflicted)
+library(harmony)
+library(data.table)
+library(pheatmap)
+library(ggplot2)
+library(patchwork)
+
+library(knitr)
+library(kableExtra)
+
+conflict_prefer("filter", "dplyr")  # Prefer dplyr's filter()
+conflict_prefer("lag", "dplyr")     # Prefer dplyr's lag()
+
+```
+
+
+
+```{r local_function_load}
+# load function from local files
+# source(here::here("source", "sc_functions.R"))
+```
+
+
+
+\newpage
+
+# 1. Read the merged Data
+```{r load_merged_data}
+seurat_obj <- readRDS(here::here("data", "synaptosomes_scRNA", "seurat-cluster_2025-05-15.rds"))
+```
+
+
+## Plot the UMAP with source and Group
+
+```{r UMAP_all,  fig.width=12, fig.height=12}
+
+seurat_obj$source <- seurat_obj$orig.ident
+
+
+library(dplyr)
+
+seurat_obj$group <- case_when(
+  seurat_obj$source %in% c("C1", "C2", "C3") ~ "CTRL",
+  seurat_obj$source %in% c("Q1", "Q2", "Q3") ~ "22q11DS",
+  TRUE                                      ~ seurat_obj$source
+)
+
+
+UMAPPlot(seurat_obj, group.by = "source", label = TRUE, pt.size = 0.5) +
+  scale_color_brewer(palette = "Dark2") +
+  ggtitle("UMAP for the source") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  # theme(legend.position = "none") +
+  theme(axis.text.x=element_blank(), axis.text.y=element_blank()) +
+  theme(axis.ticks=element_blank()) +
+  theme(panel.grid.major=element_blank(), panel.grid.minor=element_blank())
+
+print("UMAP for the source")
+UMAPPlot(seurat_obj, group.by = "group", label = TRUE, pt.size = 0.5) +
+  # scale_color_brewer(palette = "Dark2") +
+  ggtitle("UMAP for the source") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  # theme(legend.position = "none") +
+  theme(axis.text.x=element_blank(), axis.text.y=element_blank()) +
+  theme(axis.ticks=element_blank()) +
+  theme(panel.grid.major=element_blank(), panel.grid.minor=element_blank())
+
+
+
+
+
+```
+
+
+
+
+## Plot the UMAP with source and Group
+```{r UMAP_source,  fig.width=20, fig.height=10}
+
+Idents(seurat_obj) <- seurat_obj$group
+
+# 2. Plot with split.by + ncol = 3
+DimPlot(
+  seurat_obj,
+  reduction = "umap",
+  split.by  = "group",
+  pt.size   = 0.2,
+  ncol      = 3
+) +
+  # theme_minimal() +
+  theme(
+    panel.grid     = element_blank(),
+    # axis.text      = element_blank(),
+    # axis.ticks     = element_blank(),
+    plot.title     = element_text(hjust = 0.5)
+  )
+
+
+
+```
+
+
+
+```{r UMAP_source_group,  fig.width=18, fig.height=10}
+
+Idents(seurat_obj) <- seurat_obj$source
+# 1. Set factor levels so panels come out in the right order
+seurat_obj$source <- factor(
+  seurat_obj$source,
+  levels = c("C1","C2","C3","Q1","Q2","Q3")
+)
+Idents(seurat_obj) <- seurat_obj$source
+
+# 2. Plot with split.by + ncol = 3
+DimPlot(
+  seurat_obj,
+  reduction = "umap",
+  split.by  = "source",
+  pt.size   = 0.2,
+  ncol      = 3
+) +
+  # theme_minimal() +
+  theme(
+    panel.grid     = element_blank(),
+    # axis.text      = element_blank(),
+    # axis.ticks     = element_blank(),
+    plot.title     = element_text(hjust = 0.5)
+  )
+
+
+
+Idents(seurat_obj) <- seurat_obj$integrated_snn_res.0.5
+# 2. Plot with split.by + ncol = 3
+DimPlot(
+  seurat_obj,
+  reduction = "umap",
+  split.by  = "source",
+  pt.size   = 0.2,
+  ncol      = 3
+) +
+  # theme_minimal() +
+  theme(
+    panel.grid     = element_blank(),
+    # axis.text      = element_blank(),
+    # axis.ticks     = element_blank(),
+    plot.title     = element_text(hjust = 0.5)
+  )
+
+
+```
+\newpage
+
+## Plot the sample proportions of clusters
+```{r sample_proportions, fig.width=8, fig.height=6}
+library(dplyr)
+library(ggplot2)
+library(scales)     # for percent_format()
+
+
+
+Idents(seurat_obj) <- seurat_obj$integrated_snn_res.0.5
+
+seurat_obj$seurat_clusters <- seurat_obj$integrated_snn_res.0.5
+
+# 2. Build a counts + proportions data.frame
+prop_df <- seurat_obj@meta.data %>%
+  # 'ident' will be the cluster ID after you call Idents()
+  count(source, seurat_clusters) %>%       
+  mutate(ident = seurat_clusters ) %>%
+  group_by(source) %>%                         
+  mutate(prop = n / sum(n))               
+
+
+
+
+# 3. Create a hue-based vector of 15 colours
+clusters <- sort(unique(prop_df$ident))
+hue_cols <- hue_pal()(length(clusters))
+names(hue_cols) <- clusters
+
+# 4. Plot with scale_fill_manual()
+ggplot(prop_df, aes(x = source, y = prop, fill = factor(ident, levels = clusters))) +
+  geom_col(
+    width     = 0.8,
+    color     = "black",
+    linewidth = 0.2    # use linewidth instead of size
+  ) +
+  scale_y_continuous(labels = percent_format()) +
+  scale_fill_manual(values = hue_cols, name = "Cluster") +
+  labs(
+    x     = "Sample",
+    y     = "Cluster Proportion",
+    title = "Proportion of Each Cluster per Sample"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x      = element_text(angle = 45, hjust = 1),
+    panel.grid       = element_blank(),
+    plot.title       = element_text(hjust = 0.5)
+  )
+
+
+ggplot(prop_df, aes(x = source, y = prop, fill = factor(ident, levels = clusters))) +
+  geom_col(
+    width     = 0.8
+  ) +
+  scale_y_continuous(labels = percent_format()) +
+  scale_fill_manual(values = hue_cols, name = "Cluster") +
+  labs(
+    x     = "Sample",
+    y     = "Cluster Proportion",
+    title = "Proportion of Each Cluster per Sample"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x      = element_text(angle = 45, hjust = 1),
+    panel.grid       = element_blank(),
+    plot.title       = element_text(hjust = 0.5)
+  )
+
+
+library(viridis)   # install.packages("viridis") if needed
+
+ggplot(prop_df, aes(x = source, y = prop, fill = factor(ident))) +
+  geom_col(
+    width     = 0.8,
+    color     = "black",
+    linewidth = 0.2    # use linewidth instead of size
+  ) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  scale_fill_viridis_d(option = "turbo", name = "Cluster") +
+  labs(
+    x     = "Sample",
+    y     = "Cluster Proportion",
+    title = "Proportion of Each Cluster per Sample"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x      = element_text(angle = 45, hjust = 1),
+    panel.grid       = element_blank(),
+    plot.title       = element_text(hjust = 0.5)
+  )
+
+ggplot(prop_df, aes(x = source, y = prop, fill = factor(ident))) +
+  geom_col(
+    width     = 0.8
+  ) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  scale_fill_viridis_d(option = "turbo", name = "Cluster") +
+  labs(
+    x     = "Sample",
+    y     = "Cluster Proportion",
+    title = "Proportion of Each Cluster per Sample"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x      = element_text(angle = 45, hjust = 1),
+    panel.grid       = element_blank(),
+    plot.title       = element_text(hjust = 0.5)
+  )
+
+
+```
+
+\newpage
+
+## Heatmap of the cell type number in each sample
+```{r sample_proportions_matrix, fig.width=6, fig.height=3}
+cell_count_df <-seurat_obj@meta.data %>%
+  # 'ident' will be the cluster ID after you call Idents()
+  count(source, seurat_clusters)
+
+cell_count_matrix <- cell_count_df %>%
+  pivot_wider(names_from = source, values_from = n) %>%
+  column_to_rownames("seurat_clusters") %>%
+  as.matrix() %>% t()
+
+
+
+# make a heatmap of the sample
+
+library(pheatmap)
+
+# round your values to the nearest integer
+int_labels <- round(cell_count_matrix)
+
+pheatmap(cell_count_matrix,
+         cluster_rows     = FALSE,
+         cluster_cols     = FALSE,
+         show_rownames    = TRUE,
+         show_colnames    = TRUE,
+         fontsize_row     = 8,
+         fontsize_col     = 8,
+         cellwidth        = 20,
+         cellheight       = 20,
+         main             = "Cell Type Number in Each Sample",
+         color            = colorRampPalette(c("white","blue"))(50),
+         border_color     = NA,
+         display_numbers  = int_labels,  # use your integer matrix here
+         fontsize_number  = 6,
+         number_color     = "black",
+         legend           = FALSE,
+         key              = FALSE
+)
+
+
+# knit the table
+```
+
+```{r}
+
+# knit the df into a table
+
+
+kable(cell_count_matrix, format = "pipe", caption = "Cell Type Number in Each Sample") 
+
+```
+
+
+\newpage
+# 2. Find Maker Genes
+
+```{r clustering_res, fig.width=8, fig.height=6}
+# load cell marker database
+# http://bio-bigdata.hrbmu.edu.cn/CellMarker/CellMarker_download.html
+# http://117.50.127.228/CellMarker/CellMarker_download.html
+# markers_db <- read.xlsx("http://117.50.127.228/CellMarker/CellMarker_download_files/file/Cell_marker_Seq.xlsx",
+# check.names = F, sheet = 1)
+
+markers_db <- read.xlsx(here::here("data","ref", "Cell_marker_Seq.xlsx"),
+                         check.names = F, sheet = 1)
+markers_db %>% filter(
+  tissue_type == "Brain",
+  species == "Human",
+  cancer_type == "Normal") -> markers_db
+markers_db %>% group_by(cell_name) %>%
+  summarise(total = n()) -> cell_type_marker_count
+
+knitr::kable(cell_type_marker_count, format = "pipe", caption = "Cell Type Marker Count") 
+```
+
+
+
+
+```{r find_markers}
+
+for (res in c(0.1, 0.2, 0.3, 0.4, 0.5)) {
+
+
+# load the marker genes from sprintf("result/01-Clustering/umap_plot/res_%s/cluster_markers_res_%s.csv", res, res), row.names = TRUE)
+    
+cluster_marker<-read.csv(
+  sprintf("result/01-Clustering/umap_plot/res_%s/cluster_markers_res_%s.csv", res, res),
+  row.names = 1
+)
+
+print("cluster marker genes loaded")
+knitr::kable(t(table(cluster_marker$cluster)), format = "pipe", caption = sprintf("Cluster Marker Genes for res %s", res))
+
+cluster_marker %>%
+  filter(p_val_adj < 0.05, 
+         avg_log2FC > 0) %>%
+  group_by(cluster)-> sig_markers
+  # group_by(cluster) %>%
+  # slice_max(avg_log2FC, n = 2000) -> sig_markers
+table(sig_markers$cluster)
+
+lapply(unique(cluster_marker$cluster), function(cl){
+  # cl <- 0
+  print(sprintf("processing resolution %s cluster %s", res, cl))
+  sig_markers %>%
+    filter(cluster == cl) %>%
+    arrange(desc(avg_log2FC)) -> cl_marker_genes
+  
+  markers_db %>%
+    filter(Symbol %in% cl_marker_genes$gene) %>%
+    left_join(cl_marker_genes, by = c("Symbol" = "gene")) %>%
+    group_by(cell_name) %>%
+    summarise(n = n(),
+              markers = paste(unique(Symbol), collapse = ",")) %>%
+    left_join(cell_type_marker_count) %>%
+    mutate(proportion = n / total) %>%
+    arrange(desc(proportion)) -> res_anno
+  res_anno$cluster <- cl
+  
+  # add gene logfc to the annotation res
+  message("adding log2FC to the annotation res....")
+  
+  sapply(res_anno$markers, function(genes){
+    genes <- genes %>% str_split(",", simplify = T) %>% .[1,]
+    cluster_marker %>%
+      mutate(avg_log2FC = round(avg_log2FC, 4)) %>%
+      filter(cluster == cl,
+             gene %in% genes) %>%
+      arrange(match(gene, genes)) %>%
+      dplyr::select(avg_log2FC) %>%
+      unlist() %>% paste0(., collapse = ",")
+  }) -> res_anno$log2FC
+  
+  # res_anno$log2FC %>% sapply(function(x){
+  #   str_split(x ,",", simplify = T) %>% .[1,] %>%
+  #     as.numeric() %>% sum()
+  # }) -> res_anno$log2FC_sum
+  
+  # create a new column for avg_log2FC
+  res_anno$log2FC %>% sapply(function(x){
+    str_split(x ,",", simplify = T) %>% .[1,] %>%
+      as.numeric() %>% mean()
+  }) -> res_anno$avg_log2FC
+  
+  # add gene avg expr to the annotation res
+  message("adding avg expr to the annotation res....")
+ 
+  res_anno %>%
+    arrange(desc(proportion))
+}) -> cell.type.annotation
+  
+    names(cell.type.annotation) <- paste0("cluster ", unique(cluster_marker$cluster))
+  
+  openxlsx::write.xlsx(
+    cell.type.annotation,
+    file = sprintf("./result/02-Cluster-Marker/cell_type_annotation_resolution_%s.xlsx", res)
+  )
+  
+  
+# assume your data.frame is called `cluster_marker` and has columns `cluster` and `gene`
+
+# 1. Count how many clusters each gene appears in
+gene_cluster_counts <- cluster_marker %>%
+  distinct(cluster, gene) %>%     # one row per gene×cluster
+  count(gene, name = "n_clusters")
+
+# 2. Identify genes that appear in *exactly* one cluster
+unique_genes <- gene_cluster_counts %>%
+  filter(n_clusters <3 ) %>%
+  pull(gene)
+
+# delet any start with ENSG
+unique_genes <- unique_genes[!grepl("^ENSG", unique_genes)]
+
+# 3. Subset the original table to just those unique genes
+unique_markers <- cluster_marker %>%
+  filter(gene %in% unique_genes)
+
+# 4. (Optional) Split into a list by cluster
+unique_by_cluster <- unique_markers %>%
+  group_by(cluster) %>%
+  summarise(genes = list(gene)) %>%
+  deframe()
+
+# save the unique markers to a file
+write.csv(unique_markers, sprintf("result/02-Cluster-Marker/res_%s/unique_markers.csv", res), row.names = FALSE)
+
+
+  
+}
+```
+
+<!-- ```{r} -->
+<!-- JoinLayers(seurat_obj, assay = "RNA") -->
+<!-- ``` -->
+
+<!-- ```{r find_markers_plot_demo, fig.width=12, fig.height=12} -->
+<!-- gene <- "CD38" -->
+<!-- # joint he layer -->
+
+
+<!-- Idents(seurat_obj) <- seurat_obj$seurat_clusters <- seurat_obj$integrated_snn_res.0.5 -->
+<!-- file_path <- sprintf("result/02-Cluster-Marker/res_%s/Gene_%s", res, gene) -->
+<!-- plot_sc_feature(seurat_obj=seurat_obj, res = res, features = gene, save = TRUE, -->
+<!--                       group_by = "seurat_clusters", -->
+<!--                       group_by_label = sprintf("seurat_clusters_%s", res), -->
+<!--                       reduction_label = "umap", -->
+<!--                       output_prefix = file_path) -->
+<!-- ``` -->
+
+<!-- ```{r find_markers_plot, fig.width=12, fig.height=12} -->
+
+<!-- gene_list_raw <- "DCX, STMN2, MAPT" -->
+<!-- gene_list <- gene_list_raw %>% str_split(",", simplify = T) %>% .[1,] -->
+<!-- # clean the space in the gene list -->
+<!-- gene_list <- gene_list %>% str_trim() %>% str_squish() -->
+
+
+<!-- for (gene in gene_list) { -->
+<!--   print(gene) -->
+<!--   file_path <- sprintf("result/02-Cluster-Marker/res_%s/Gene_%s", res, gene) -->
+<!--   p<-plot_sc_feature(seurat_obj, res = res, features = gene, save = TRUE, -->
+<!--                   group_by = "seurat_clusters", -->
+<!--                   group_by_label = sprintf("seurat_clusters_%s", res), -->
+<!--                   reduction_label = "umap", -->
+<!--                   output_prefix = file_path) -->
+<!--   print(p) -->
+<!-- } -->
+
+<!-- ``` -->
+
+
+
+
+
+<!-- ## Check the cluster result -->
+
+<!-- ```{r cluser_plot, fig.width=12, fig.height=12} -->
+
+<!-- # UMAP for the res 0.1 -->
+
+<!-- Idents(seurat_obj) <- seurat_obj$seurat_clusters -->
+
+<!-- library(ggplot2) -->
+<!-- DimPlot( -->
+<!--   seurat_obj, reduction = "umap", group.by = "seurat_clusters", -->
+<!--   label = TRUE, pt.size = 0.5 -->
+<!-- ) + -->
+<!--   scale_color_brewer(palette = "Dark2") + -->
+<!--   ggtitle("UMAP for the res 0.1") + -->
+<!--   theme(plot.title = element_text(hjust = 0.5)) + -->
+<!--   theme(legend.position = "none") + -->
+<!--   theme(axis.text.x=element_blank(), axis.text.y=element_blank()) + -->
+<!--   theme(axis.ticks=element_blank()) + -->
+<!--   theme(panel.grid.major=element_blank(), panel.grid.minor=element_blank()) -->
+<!-- ``` -->
+
+
+
+\newpage
+Session Information
+```{r session_info}
+sessionInfo()
+```
+

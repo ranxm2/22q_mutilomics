@@ -1,0 +1,185 @@
+---
+title: "Boxplot for miRNA"
+subtitle: ""
+author: "Ximing Ran"
+date: "2025-03-31"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: false
+  html_document:
+    # code_folding: hide
+    toc: true
+    toc_float: true
+hitheme: tomorrow
+highlighter: highlight.js
+
+---
+
+```{r setup, include=FALSE}
+# load libraries
+library(tidyverse)
+library(knitr)
+set.seed(2024)
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.path = "./results/03-miRNA-boxplot-v2/Analysis_figure/"
+)
+
+theme_set(theme_bw() + theme(legend.position = "bottom"))
+knitr::kable(head(mtcars[, 1:4]), "simple")
+```
+
+```{r}
+library(tibble)
+library(tidyr)
+library(dplyr)
+library(rtracklayer)
+```
+
+
+
+```{r local_function_load}
+# load function from local files
+source(here::here("source", "DEG_functions.R"))
+```
+
+\newpage
+
+# 1. Read the count data
+In this section, we will read the clean count data from the synaptosomes_miRNARNA folder. The data is stored in the format of `.csv`. We will read the data and filter the columns based on the condition list. The final table will be stored in `results/02-DEG-Vehicle/DESeq2_results.csv`.
+
+```{r load_bulkRNA_data}
+counts<- read.csv(here::here("data", "synaptosomes_miRNA", "raw",
+                                      "mature_counts.csv"), row.names = 1)
+
+counts <- as.data.frame(counts) 
+counts <- t(counts)
+
+row.names(counts) <- gsub("\\.", "-", row.names(counts))
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "synaptosomes_bulkRNA",
+                                      "sample_info_22q.csv")) %>%
+                    mutate(condition = paste0(Diagosis, "_", Treatment))
+
+
+# Ensure the column names of counts exist in Sample.name
+new_colnames <- sample_list_raw$Label[match(colnames(counts), sample_list_raw$Sample.name)]
+
+# Assign new column names
+colnames(counts) <- new_colnames
+
+
+# sort the columns by the colname
+condition_list <- data.frame(
+  group =sample_list_raw$condition
+)
+
+row.names(condition_list) <- sample_list_raw$Label
+
+counts<- counts[, rownames(condition_list)]
+
+miRNA_22q <- c("hsa-miR-185-5p","hsa-miR-185-3p","hsa-miR-1306-5p","hsa-miR-1286")
+
+target_miRNA <- c("hsa-miR-185-5p","hsa-miR-214-3p","hsa-miR-128-3p")
+
+```
+
+
+# 2. Normalization and DESeq2 analysis
+
+```{r DESeq2_analysis}
+# filter gene withall 0
+count_input <-  counts
+count_input <- count_input[rowSums(count_input) > 0, ]
+
+# Create a DESeq2 object
+dds_obj <- DESeqDataSetFromMatrix(countData = count_input,
+                              colData = condition_list,
+                              design = ~ group)
+
+# get the normalized count
+dds_obj <- DESeq(dds_obj)
+
+# Get the normalized count
+vsd.obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+normalized_count  <- assay(vsd.obj)
+
+
+# save the normalized count to the file
+write.csv(normalized_count , file = file.path("results","02-miRNA-boxplot", "DESeq2_normalized_count.csv"))
+
+
+```
+
+
+\newpage
+
+# 3. Visualization for reuslt
+
+## (1) Sample information Heatmap 
+
+```{r Sample_dis_Heatmap, fig.width=8, fig.height=6}
+result_folder = file.path("results", "03-miRNA-boxplot-v2")
+# Plot the sample distance 
+plot_sample_heatmap(dds_obj, figure_folder =  file.path(result_folder,"01-Sample_info"),
+                    save = TRUE,
+                    file_name = "01_sample_distance_heatmap")
+```
+
+\newpage
+
+## (2) Sample information PCA plot
+
+```{r  Sample_PCA, fig.width=8, fig.height=6}
+# Plot the PCA plot for the sample
+plot_sample_PCA_plot_mutil(dds_obj,figure_folder = file.path(result_folder,"01-Sample_info"),
+                   file_name = "02_sample_PCA_plot")
+```
+
+\newpage
+
+# 4. Boxplot for miRNA
+
+```{r boxplot_miRNA, fig.width=4, fig.height=6}
+counts_matrix <- counts(dds_obj, normalized = TRUE)
+feature <- target_miRNA[1]
+
+condition_list_label <- condition_list 
+condition_list_label$group <- gsub("_", "+", condition_list_label$group)
+condition_list_label$group <- gsub("Vehicle", "Veh", condition_list_label$group)
+
+all_miRNA <- c(target_miRNA, miRNA_22q)
+
+
+for (index in 1:length(all_miRNA )){
+  plot_miRNA <- all_miRNA [index]
+  
+  p<-plot_expression_boxplot_4_group_mirna(counts_matrix = normalized_count, condition_list_label, feature =  plot_miRNA  ,
+                                            figure_folder = file.path(result_folder,"Boxplot"),
+                                             file_name = paste0("miRNA_", plot_miRNA),
+                                              fig.height = 6, fig.width = 4,
+                                              save=TRUE,
+                                              group_1="CTRL+Veh", 
+                                              group_2="22q+Veh", 
+                                              group_3="CTRL+TTX",
+                                              group_4="22q+TTX")
+  print(p)
+  print(paste0("miRNA_", plot_miRNA))
+}
+
+
+```
+
+
+\newpage
+# Session information
+```{r}
+sessionInfo()
+```
+

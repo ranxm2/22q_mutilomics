@@ -35,7 +35,7 @@ knitr::opts_chunk$set(
   echo = FALSE,
   warning = FALSE,
   message = FALSE,
-  fig.path = "./results/02-Regularion_Network/figures/"
+  fig.path = "./results/02-Regulation_Vehicle/figures/"
 )
 
 theme_set(theme_bw() + theme(legend.position = "bottom"))
@@ -278,6 +278,8 @@ plot_network_circle_blue(network_data, path_name, gene_list,
                          result_folder, file_name)
 
 ```
+
+\newpage
 
 # 5. Plot the leaf network
 ## 5.1 Up-regulated miRNA and down-regulated gene
@@ -675,6 +677,765 @@ print(p)
 
 
 ```
+\newpage
+
+
+
+
+# 6. Plot the circos network
+
+## hsa-mir-128-3p
+```{r hsa-mir-128-3p, fig.width=12, fig.height=6}
+library(ComplexHeatmap)
+result_up <- enrichment_up 
+
+####### for the first miRNA
+
+miRNA_name <- "hsa-mir-128-3p"
+gene_list <-c("IGF2","TRIM56","WNT5A","RUNX1","IFITM1",
+              "CXCL12","LGR4","FN1","COL1A1","COL3A1",
+              "HLA-B","GPNMB","KLF4","TGFBR2","TGFBR3",
+              "SERPINE1")
+
+print(miRNA_name)
+gene_list <- gene_list[!grepl("TBX1", gene_list)]
+
+#####################################
+### plot for circos
+#####################################
+
+# re-order highlight gene by log2fc
+circos.plot.gene <- gene_list
+
+circos.dat <- data.frame(
+  sector = c(up_path_way_sel , circos.plot.gene),
+  cat = c(rep("GO Term", length(up_path_way_sel)), rep("Gene", length(circos.plot.gene)))
+)
+
+
+# update track length for go term
+sapply(1:nrow(circos.dat), function(i){
+  if (circos.dat$cat[i] == "Gene") {
+    ""
+  }else{
+    result_up %>% 
+      filter(term_name == circos.dat$sector[i]) -> tmp
+    tmp$intersection %>% str_split(",", simplify = T) %>%
+      .[1,] %>% intersect(.,   circos.plot.gene ) %>%
+      paste(., sep = ",", collapse = ",")
+  }
+}) -> circos.dat$link
+
+
+sapply(1:nrow(circos.dat), function(i){
+  if (circos.dat$cat[i] == "Gene") {
+    sum(grepl(circos.dat$sector[i], circos.dat$link))
+  }else{
+    str_split(circos.dat$link[i], ",", simplify = T) %>%
+      grep("\\S+", ., value = T) %>% length()
+  }
+}) -> circos.dat$link_count
+
+# sort the rows with gene by link_count
+# Filter rows with `Gene` and sort by `link_count`
+# gene_sorted <- circos.dat[circos.dat$cat == "Gene", ]
+# gene_sorted <- gene_sorted[order(gene_sorted$link_count), ]
+# circos.dat[circos.dat$cat == "Gene", ] <- gene_sorted
+
+
+
+
+circos.dat %>% filter(link_count > 0) -> circos.dat
+
+# 11 gene 平分180度
+# 8 go terms 平分180度
+sum(circos.dat$link_count) / 2 -> total.link.count
+circos.dat %>%
+  mutate(height = ifelse(cat == "Gene", 0.6, 1),
+         length = ifelse(cat == "Gene", 180 / length(circos.plot.gene), 180 / total.link.count * link_count)) -> circos.dat
+
+
+
+# track color
+log2fc  <- DEG %>% filter(gene %in% gene_list) %>% 
+  select(gene, log2FoldChange) %>% 
+  mutate(scale = (log2FoldChange - 1) / 5) 
+corlor_map <- rgb(colorRamp(colors = brewer.pal(4, "Reds"))(log2fc$scale),maxColorValue = 255)
+log2fc$color <- corlor_map
+# sort the color by log2fc
+log2fc <- log2fc[order(log2fc$log2FoldChange),]
+log2fc$gene
+
+sapply(1:nrow(circos.dat), function(i){
+  if (circos.dat$cat[i] == "Gene") {
+    log2fc %>% filter(gene == circos.dat$sector[i]) %>% select(color) %>% unlist()
+  }else{
+    brewer.pal(8, "Set2")[i]
+  }
+}) -> circos.dat$color
+circos.dat.gene <- circos.dat %>% filter(cat == "Gene")
+circos.dat.gene <- circos.dat.gene[match(log2fc$gene, circos.dat.gene$sector), ]
+circos.dat[circos.dat$cat == "Gene", ] <- circos.dat.gene 
+
+
+# merge(circos.dat, log2fc[c("gene", "color")])
+# sig.res %>% filter(gene %in% highlight.gene) %>% select(log2FoldChange)
+# # colorRamp(colors = brewer.pal(5, "Reds"))(100)
+# rgb(colorRamp(colors = brewer.pal(5, "Reds"))(0.9),
+#     maxColorValue = 255, alpha = 100)
+
+pdf(file = file.path("results", "04-circos", paste0("circos_plot_", miRNA_name, ".pdf")), width = 12, height = 6, family = "sans", bg = "transparent")
+circos.clear()
+circos.par("start.degree" = 90,
+           'gap.degree' = 2,
+           'canvas.ylim' = c(-1.5, 1.5),
+           'cell.padding' = c(0, 0, 0, 0))
+circos.initialize(sectors = circos.dat$sector,
+                  xlim = cbind(rep(0, 4), circos.dat$length))
+circos.track(ylim = c(0, 1), bg.border = NA, track.height = 0.1,
+             panel.fun = function(x, y){
+               circos.rect(xleft = CELL_META$xlim[1], xright = CELL_META$xlim[2],
+                           ybottom = 1-circos.dat$height[CELL_META$sector.numeric.index], ytop = 1,
+                           col = circos.dat$color[CELL_META$sector.numeric.index])
+             })
+gene.link.idx <- rep(1, length(gene_list))
+names(gene.link.idx) <- gene_list
+for (i in 1:nrow(circos.dat)) {
+  # i = 2
+  # circos.par("track.height" = circos.dat$height[i],
+  #            "start.degree" = 90,
+  #            'gap.degree' = 2,
+  #            'canvas.ylim' = c(-1.5, 1.5),
+  #            'cell.padding' = c(0, 0, 0, 0))
+  
+  if (circos.dat$cat[i] == "Gene") {
+    circos.text(9, 1, labels = circos.dat$sector[i],
+                facing = "clockwise", niceFacing = T,
+                font = 2, adj = c(-0.1),
+                sector.index = circos.dat$sector[i])
+  }
+  
+  # link
+  if (nchar(circos.dat$link[i]) > 1) {
+    targe.genes <- str_split(circos.dat$link[i], ",", simplify = T) %>% .[1,]
+    for (j in 1:length(targe.genes)) {
+      # the j-th link for the target gene
+      # 计算link终点的起止坐标
+      unit.length <- 180 / length(gene_list) / circos.dat$link_count[circos.dat$sector == targe.genes[j]]
+      x0 = (gene.link.idx[targe.genes[j]] - 1) * unit.length
+      x1 = gene.link.idx[targe.genes[j]] * unit.length
+      circos.link(sector.index1 = circos.dat$sector[i],
+                  point1 = c((j - 1) * 180 / total.link.count, j * 180 / total.link.count),
+                  sector.index2 = targe.genes[j],
+                  point2 = c(x0, x1),
+                  col = brewer.pal(8, "Set2")[i],
+                  border = "black")
+      
+      gene.link.idx[targe.genes[j]] <- gene.link.idx[targe.genes[j]] + 1
+    }
+  }
+}
+# add legend for go term
+legend(x = 1.1, y = .5, 
+       title = "GO Terms",
+       title.adj = 0.05,
+       title.cex = 1.2,
+       title.font = 2,
+       text.font = 2,
+       cex = 1,
+       legend = circos.dat$sector[circos.dat$cat != "Gene"], 
+       fill = circos.dat$color[circos.dat$cat != "Gene"],
+       bty = "n" #remove out box,
+)
+draw(Legend(at = c(1, 2, 5), break_dist = 5, labels = c("1", "        ", "5"),
+            labels_gp = gpar(font = 2, cex = 1.1),
+            title_gp = gpar(font = 2, cex = 1.2),
+            col_fun = colorRamp2(c(1, 5), brewer.pal(4, "Reds")[c(1, 4)]),
+            title_position = "topleft", title = "Log2FC", direction = "horizontal"),
+     x = unit(190, "mm"), y = unit(30, "mm"))
+dev.off()
+
+circos.clear()
+circos.par("start.degree" = 90,
+           'gap.degree' = 2,
+           'canvas.ylim' = c(-1.5, 1.5),
+           'cell.padding' = c(0, 0, 0, 0))
+circos.initialize(sectors = circos.dat$sector,
+                  xlim = cbind(rep(0, 4), circos.dat$length))
+circos.track(ylim = c(0, 1), bg.border = NA, track.height = 0.1,
+             panel.fun = function(x, y){
+               circos.rect(xleft = CELL_META$xlim[1], xright = CELL_META$xlim[2],
+                           ybottom = 1-circos.dat$height[CELL_META$sector.numeric.index], ytop = 1,
+                           col = circos.dat$color[CELL_META$sector.numeric.index])
+             })
+gene.link.idx <- rep(1, length(gene_list))
+names(gene.link.idx) <- gene_list
+for (i in 1:nrow(circos.dat)) {
+  # i = 2
+  # circos.par("track.height" = circos.dat$height[i],
+  #            "start.degree" = 90,
+  #            'gap.degree' = 2,
+  #            'canvas.ylim' = c(-1.5, 1.5),
+  #            'cell.padding' = c(0, 0, 0, 0))
+  
+  if (circos.dat$cat[i] == "Gene") {
+    circos.text(9, 1, labels = circos.dat$sector[i],
+                facing = "clockwise", niceFacing = T,
+                font = 2, adj = c(-0.1),
+                sector.index = circos.dat$sector[i])
+  }
+  
+  # link
+  if (nchar(circos.dat$link[i]) > 1) {
+    targe.genes <- str_split(circos.dat$link[i], ",", simplify = T) %>% .[1,]
+    for (j in 1:length(targe.genes)) {
+      # the j-th link for the target gene
+      # 计算link终点的起止坐标
+      unit.length <- 180 / length(gene_list) / circos.dat$link_count[circos.dat$sector == targe.genes[j]]
+      x0 = (gene.link.idx[targe.genes[j]] - 1) * unit.length
+      x1 = gene.link.idx[targe.genes[j]] * unit.length
+      circos.link(sector.index1 = circos.dat$sector[i],
+                  point1 = c((j - 1) * 180 / total.link.count, j * 180 / total.link.count),
+                  sector.index2 = targe.genes[j],
+                  point2 = c(x0, x1),
+                  col = brewer.pal(8, "Set2")[i],
+                  border = "black")
+      
+      gene.link.idx[targe.genes[j]] <- gene.link.idx[targe.genes[j]] + 1
+    }
+  }
+}
+# add legend for go term
+legend(x = 1.1, y = .5, 
+       title = "GO Terms",
+       title.adj = 0.05,
+       title.cex = 1.2,
+       title.font = 2,
+       text.font = 2,
+       cex = 1,
+       legend = circos.dat$sector[circos.dat$cat != "Gene"], 
+       fill = circos.dat$color[circos.dat$cat != "Gene"],
+       bty = "n" #remove out box,
+)
+draw(Legend(at = c(1, 2, 5), break_dist = 5, labels = c("1", "        ", "5"),
+            labels_gp = gpar(font = 2, cex = 1.1),
+            title_gp = gpar(font = 2, cex = 1.2),
+            col_fun = colorRamp2(c(1, 5), brewer.pal(4, "Reds")[c(1, 4)]),
+            title_position = "topleft", title = "Log2FC", direction = "horizontal"),
+     x = unit(190, "mm"), y = unit(30, "mm"))
+```
+
+
+\newpage
+## hsa-mir-185-5p
+```{r hsa-mir-185-5p, fig.width=12, fig.height=6}
+
+####### for the mir "hsa-mir-185-5p"
+
+miRNA_name <- "hsa-mir-185-5p"
+gene_list <-c("IGF2","TRIM56","SIX1","SERPINE1","RBM47",
+              "ITGB8","TGFBR2","CCR7","FN1","IL32",
+              "IGF2BP1","COL1A1")
+
+
+print(miRNA_name)
+gene_list <- gene_list[!grepl("TBX1", gene_list)]
+
+
+
+#####################################
+### plot for circos
+#####################################
+
+# re-order highlight gene by log2fc
+circos.plot.gene <- gene_list
+
+circos.dat <- data.frame(
+  sector = c(up_path_way_sel , circos.plot.gene),
+  cat = c(rep("GO Term", length(up_path_way_sel)), rep("Gene", length(circos.plot.gene)))
+)
+
+
+# update track length for go term
+sapply(1:nrow(circos.dat), function(i){
+  if (circos.dat$cat[i] == "Gene") {
+    ""
+  }else{
+    result_up %>% 
+      filter(term_name == circos.dat$sector[i]) -> tmp
+    tmp$intersection %>% str_split(",", simplify = T) %>%
+      .[1,] %>% intersect(.,   circos.plot.gene ) %>%
+      paste(., sep = ",", collapse = ",")
+  }
+}) -> circos.dat$link
+
+
+sapply(1:nrow(circos.dat), function(i){
+  if (circos.dat$cat[i] == "Gene") {
+    sum(grepl(circos.dat$sector[i], circos.dat$link))
+  }else{
+    str_split(circos.dat$link[i], ",", simplify = T) %>%
+      grep("\\S+", ., value = T) %>% length()
+  }
+}) -> circos.dat$link_count
+
+# sort the rows with gene by link_count
+# Filter rows with `Gene` and sort by `link_count`
+# gene_sorted <- circos.dat[circos.dat$cat == "Gene", ]
+# gene_sorted <- gene_sorted[order(gene_sorted$link_count), ]
+# circos.dat[circos.dat$cat == "Gene", ] <- gene_sorted
+
+
+
+
+circos.dat %>% filter(link_count > 0) -> circos.dat
+
+# 11 gene 平分180度
+# 8 go terms 平分180度
+sum(circos.dat$link_count) / 2 -> total.link.count
+circos.dat %>%
+  mutate(height = ifelse(cat == "Gene", 0.6, 1),
+         length = ifelse(cat == "Gene", 180 / length(circos.plot.gene), 180 / total.link.count * link_count)) -> circos.dat
+
+
+
+# track color
+log2fc  <- DEG  %>% filter(gene %in% gene_list) %>% 
+  select(gene, log2FoldChange) %>% 
+  mutate(scale = (log2FoldChange - 1) / 7.5) 
+corlor_map <- rgb(colorRamp(colors = brewer.pal(4, "Reds"))(log2fc$scale),maxColorValue = 255)
+log2fc$color <- corlor_map
+
+
+
+# sort the color by log2fc
+log2fc <- log2fc[order(log2fc$log2FoldChange),]
+log2fc$gene
+
+sapply(1:nrow(circos.dat), function(i){
+  if (circos.dat$cat[i] == "Gene") {
+    log2fc %>% filter(gene == circos.dat$sector[i]) %>% select(color) %>% unlist()
+  }else{
+    brewer.pal(8, "Set2")[i]
+  }
+}) -> circos.dat$color
+circos.dat.gene <- circos.dat %>% filter(cat == "Gene")
+circos.dat.gene <- circos.dat.gene[match(log2fc$gene, circos.dat.gene$sector), ]
+circos.dat[circos.dat$cat == "Gene", ] <- circos.dat.gene 
+
+
+# merge(circos.dat, log2fc[c("gene", "color")])
+# sig.res %>% filter(gene %in% highlight.gene) %>% select(log2FoldChange)
+# # colorRamp(colors = brewer.pal(5, "Reds"))(100)
+# rgb(colorRamp(colors = brewer.pal(5, "Reds"))(0.9),
+#     maxColorValue = 255, alpha = 100)
+
+pdf(file = file.path("results", "04-circos", paste0("circos_plot_", miRNA_name, ".pdf")), width = 12, height = 6, family = "sans", bg = "transparent")
+circos.clear()
+circos.par("start.degree" = 90,
+           'gap.degree' = 2,
+           'canvas.ylim' = c(-1.5, 1.5),
+           'cell.padding' = c(0, 0, 0, 0))
+circos.initialize(sectors = circos.dat$sector,
+                  xlim = cbind(rep(0, 4), circos.dat$length))
+circos.track(ylim = c(0, 1), bg.border = NA, track.height = 0.1,
+             panel.fun = function(x, y){
+               circos.rect(xleft = CELL_META$xlim[1], xright = CELL_META$xlim[2],
+                           ybottom = 1-circos.dat$height[CELL_META$sector.numeric.index], ytop = 1,
+                           col = circos.dat$color[CELL_META$sector.numeric.index])
+             })
+gene.link.idx <- rep(1, length(gene_list))
+names(gene.link.idx) <- gene_list
+for (i in 1:nrow(circos.dat)) {
+  # i = 2
+  # circos.par("track.height" = circos.dat$height[i],
+  #            "start.degree" = 90,
+  #            'gap.degree' = 2,
+  #            'canvas.ylim' = c(-1.5, 1.5),
+  #            'cell.padding' = c(0, 0, 0, 0))
+  
+  if (circos.dat$cat[i] == "Gene") {
+    circos.text(9, 1, labels = circos.dat$sector[i],
+                facing = "clockwise", niceFacing = T,
+                font = 2, adj = c(-0.1),
+                sector.index = circos.dat$sector[i])
+  }
+  
+  # link
+  if (nchar(circos.dat$link[i]) > 1) {
+    targe.genes <- str_split(circos.dat$link[i], ",", simplify = T) %>% .[1,]
+    for (j in 1:length(targe.genes)) {
+      # the j-th link for the target gene
+      # 计算link终点的起止坐标
+      unit.length <- 180 / length(gene_list) / circos.dat$link_count[circos.dat$sector == targe.genes[j]]
+      x0 = (gene.link.idx[targe.genes[j]] - 1) * unit.length
+      x1 = gene.link.idx[targe.genes[j]] * unit.length
+      circos.link(sector.index1 = circos.dat$sector[i],
+                  point1 = c((j - 1) * 180 / total.link.count, j * 180 / total.link.count),
+                  sector.index2 = targe.genes[j],
+                  point2 = c(x0, x1),
+                  col = brewer.pal(8, "Set2")[i],
+                  border = "black")
+      
+      gene.link.idx[targe.genes[j]] <- gene.link.idx[targe.genes[j]] + 1
+    }
+  }
+}
+# add legend for go term
+legend(x = 1.1, y = .5, 
+       title = "GO Terms",
+       title.adj = 0.05,
+       title.cex = 1.2,
+       title.font = 2,
+       text.font = 2,
+       cex = 1,
+       legend = circos.dat$sector[circos.dat$cat != "Gene"], 
+       fill = circos.dat$color[circos.dat$cat != "Gene"],
+       bty = "n" #remove out box,
+)
+draw(Legend(at = c(1, 2, 5), break_dist = 5, labels = c("1", "        ", "5"),
+            labels_gp = gpar(font = 2, cex = 1.1),
+            title_gp = gpar(font = 2, cex = 1.2),
+            col_fun = colorRamp2(c(1, 5), brewer.pal(4, "Reds")[c(1, 4)]),
+            title_position = "topleft", title = "Log2FC", direction = "horizontal"),
+     x = unit(190, "mm"), y = unit(30, "mm"))
+dev.off()
+circos.clear()
+circos.par("start.degree" = 90,
+           'gap.degree' = 2,
+           'canvas.ylim' = c(-1.5, 1.5),
+           'cell.padding' = c(0, 0, 0, 0))
+circos.initialize(sectors = circos.dat$sector,
+                  xlim = cbind(rep(0, 4), circos.dat$length))
+circos.track(ylim = c(0, 1), bg.border = NA, track.height = 0.1,
+             panel.fun = function(x, y){
+               circos.rect(xleft = CELL_META$xlim[1], xright = CELL_META$xlim[2],
+                           ybottom = 1-circos.dat$height[CELL_META$sector.numeric.index], ytop = 1,
+                           col = circos.dat$color[CELL_META$sector.numeric.index])
+             })
+gene.link.idx <- rep(1, length(gene_list))
+names(gene.link.idx) <- gene_list
+for (i in 1:nrow(circos.dat)) {
+  # i = 2
+  # circos.par("track.height" = circos.dat$height[i],
+  #            "start.degree" = 90,
+  #            'gap.degree' = 2,
+  #            'canvas.ylim' = c(-1.5, 1.5),
+  #            'cell.padding' = c(0, 0, 0, 0))
+  
+  if (circos.dat$cat[i] == "Gene") {
+    circos.text(9, 1, labels = circos.dat$sector[i],
+                facing = "clockwise", niceFacing = T,
+                font = 2, adj = c(-0.1),
+                sector.index = circos.dat$sector[i])
+  }
+  
+  # link
+  if (nchar(circos.dat$link[i]) > 1) {
+    targe.genes <- str_split(circos.dat$link[i], ",", simplify = T) %>% .[1,]
+    for (j in 1:length(targe.genes)) {
+      # the j-th link for the target gene
+      # 计算link终点的起止坐标
+      unit.length <- 180 / length(gene_list) / circos.dat$link_count[circos.dat$sector == targe.genes[j]]
+      x0 = (gene.link.idx[targe.genes[j]] - 1) * unit.length
+      x1 = gene.link.idx[targe.genes[j]] * unit.length
+      circos.link(sector.index1 = circos.dat$sector[i],
+                  point1 = c((j - 1) * 180 / total.link.count, j * 180 / total.link.count),
+                  sector.index2 = targe.genes[j],
+                  point2 = c(x0, x1),
+                  col = brewer.pal(8, "Set2")[i],
+                  border = "black")
+      
+      gene.link.idx[targe.genes[j]] <- gene.link.idx[targe.genes[j]] + 1
+    }
+  }
+}
+# add legend for go term
+legend(x = 1.1, y = .5, 
+       title = "GO Terms",
+       title.adj = 0.05,
+       title.cex = 1.2,
+       title.font = 2,
+       text.font = 2,
+       cex = 1,
+       legend = circos.dat$sector[circos.dat$cat != "Gene"], 
+       fill = circos.dat$color[circos.dat$cat != "Gene"],
+       bty = "n" #remove out box,
+)
+draw(Legend(at = c(1, 2, 5), break_dist = 5, labels = c("1", "        ", "5"),
+            labels_gp = gpar(font = 2, cex = 1.1),
+            title_gp = gpar(font = 2, cex = 1.2),
+            col_fun = colorRamp2(c(1, 5), brewer.pal(4, "Reds")[c(1, 4)]),
+            title_position = "topleft", title = "Log2FC", direction = "horizontal"),
+     x = unit(190, "mm"), y = unit(30, "mm"))
+```
+
+
+\newpage
+## hsa-mir-214-3p
+```{r hsa-mir-214-3p, fig.width=12, fig.height=6} 
+
+
+###################
+### for mir 214
+
+# 
+miRNA_name <- "hsa-mir-214-3p"
+gene_list <-c("GRIN1","GRIA3","GRM5","PLPPR4","KCNJ10",
+              "SNCA","LYNX1","SLC4A10","FAM107A")
+
+down_path_way_sel <- c("chemical synaptic transmission","trans-synaptic signaling",
+                       "synaptic transmission, glutamatergic","regulation of neuronal synaptic plasticity",
+                       "postsynaptic density","Neuroactive ligand-receptor interaction",
+                       "nervous system development","neurogenesis")
+
+
+#####################################
+### plot for circos
+#####################################
+
+# re-order highlight gene by log2fc
+circos.plot.gene <- gene_list
+
+circos.dat <- data.frame(
+  sector = c(down_path_way_sel  , circos.plot.gene),
+  cat = c(rep("GO Term", length(down_path_way_sel )), rep("Gene", length(circos.plot.gene)))
+)
+
+result_down <-enrichment_down
+# update track length for go term
+sapply(1:nrow(circos.dat), function(i){
+  if (circos.dat$cat[i] == "Gene") {
+    ""
+  }else{
+    result_down %>% 
+      filter(term_name == circos.dat$sector[i]) -> tmp
+    tmp$intersection %>% str_split(",", simplify = T) %>%
+      .[1,] %>% intersect(.,   circos.plot.gene ) %>%
+      paste(., sep = ",", collapse = ",")
+  }
+}) -> circos.dat$link
+
+
+sapply(1:nrow(circos.dat), function(i){
+  if (circos.dat$cat[i] == "Gene") {
+    sum(grepl(circos.dat$sector[i], circos.dat$link))
+  }else{
+    str_split(circos.dat$link[i], ",", simplify = T) %>%
+      grep("\\S+", ., value = T) %>% length()
+  }
+}) -> circos.dat$link_count
+
+# sort the rows with gene by link_count
+# Filter rows with `Gene` and sort by `link_count`
+# gene_sorted <- circos.dat[circos.dat$cat == "Gene", ]
+# gene_sorted <- gene_sorted[order(gene_sorted$link_count), ]
+# circos.dat[circos.dat$cat == "Gene", ] <- gene_sorted
+
+
+
+
+circos.dat %>% filter(link_count > 0) -> circos.dat
+
+# 11 gene 平分180度
+# 8 go terms 平分180度
+sum(circos.dat$link_count) / 2 -> total.link.count
+circos.dat %>%
+  mutate(height = ifelse(cat == "Gene", 0.6, 1),
+         length = ifelse(cat == "Gene", 180 / length(circos.plot.gene), 180 / total.link.count * link_count)) -> circos.dat
+
+
+
+# track color
+log2fc  <- DEG  %>% filter(gene %in% gene_list) %>% 
+  select(gene, log2FoldChange) %>% 
+  mutate(scale = -(log2FoldChange + 1)  ) 
+
+log2fc <- log2fc[order(log2fc$log2FoldChange, decreasing = TRUE), ]
+corlor_map <- rgb(colorRamp(colors = brewer.pal(4, "Blues"))(log2fc$scale),maxColorValue = 255)
+log2fc$color <- corlor_map
+
+
+
+
+sapply(1:nrow(circos.dat), function(i){
+  if (circos.dat$cat[i] == "Gene") {
+    log2fc %>% filter(gene == circos.dat$sector[i]) %>% select(color) %>% unlist()
+  }else{
+    brewer.pal(8, "Set2")[i]
+  }
+}) -> circos.dat$color
+
+circos.dat.gene <- circos.dat %>% filter(cat == "Gene")
+circos.dat.gene <- circos.dat.gene[match(log2fc$gene, circos.dat.gene$sector), ]
+circos.dat[circos.dat$cat == "Gene", ] <- circos.dat.gene 
+
+
+# merge(circos.dat, log2fc[c("gene", "color")])
+# sig.res %>% filter(gene %in% highlight.gene) %>% select(log2FoldChange)
+# # colorRamp(colors = brewer.pal(5, "Reds"))(100)
+# rgb(colorRamp(colors = brewer.pal(5, "Reds"))(0.9),
+#     maxColorValue = 255, alpha = 100)
+
+pdf(file = file.path("results", "04-circos", paste0("circos_plot_", miRNA_name, ".pdf")),
+    width = 12, height = 6, family = "sans", bg = "transparent")
+circos.clear()
+circos.par("start.degree" = 90,
+           'gap.degree' = 2,
+           'canvas.ylim' = c(-1.5, 1.5),
+           'cell.padding' = c(0, 0, 0, 0))
+circos.initialize(sectors = circos.dat$sector,
+                  xlim = cbind(rep(0, 4), circos.dat$length))
+circos.track(ylim = c(0, 1), bg.border = NA, track.height = 0.1,
+             panel.fun = function(x, y){
+               circos.rect(xleft = CELL_META$xlim[1], xright = CELL_META$xlim[2],
+                           ybottom = 1-circos.dat$height[CELL_META$sector.numeric.index], ytop = 1,
+                           col = circos.dat$color[CELL_META$sector.numeric.index])
+             })
+
+gene.link.idx <- rep(1, length(gene_list))
+names(gene.link.idx) <- gene_list
+for (i in 1:nrow(circos.dat)) {
+  # i = 2
+  # circos.par("track.height" = circos.dat$height[i],
+  #            "start.degree" = 90,
+  #            'gap.degree' = 2,
+  #            'canvas.ylim' = c(-1.5, 1.5),
+  #            'cell.padding' = c(0, 0, 0, 0))
+  
+  if (circos.dat$cat[i] == "Gene") {
+    circos.text(9, 1, labels = circos.dat$sector[i],
+                facing = "clockwise", niceFacing = T,
+                font = 2, adj = c(-0.1),
+                sector.index = circos.dat$sector[i])
+  }
+  
+  # link
+  if (nchar(circos.dat$link[i]) > 1) {
+    targe.genes <- str_split(circos.dat$link[i], ",", simplify = T) %>% .[1,]
+    for (j in 1:length(targe.genes)) {
+      # the j-th link for the target gene
+      # 计算link终点的起止坐标
+      unit.length <- 180 / length(gene_list) / circos.dat$link_count[circos.dat$sector == targe.genes[j]]
+      x0 = (gene.link.idx[targe.genes[j]] - 1) * unit.length
+      x1 = gene.link.idx[targe.genes[j]] * unit.length
+      circos.link(sector.index1 = circos.dat$sector[i],
+                  point1 = c((j - 1) * 180 / total.link.count, j * 180 / total.link.count),
+                  sector.index2 = targe.genes[j],
+                  point2 = c(x0, x1),
+                  col = brewer.pal(8, "Set2")[i],
+                  border = "black")
+      
+      gene.link.idx[targe.genes[j]] <- gene.link.idx[targe.genes[j]] + 1
+    }
+  }
+}
+
+
+# add legend for go term
+legend(x = 1.1, y = .5, 
+       title = "GO Terms",
+       title.adj = 0.05,
+       title.cex = 1.2,
+       title.font = 2,
+       text.font = 2,
+       cex = 1,
+       legend = circos.dat$sector[circos.dat$cat != "Gene"], 
+       fill = circos.dat$color[circos.dat$cat != "Gene"],
+       bty = "n" #remove out box,
+)
+
+draw(Legend(at = c(-1, -1.5, -2), break_dist = 5, labels = c("-1", "        ", "-2"),
+            labels_gp = gpar(font = 2, cex = 1.1),
+            title_gp = gpar(font = 2, cex = 1.2),
+            col_fun = colorRamp2(c(-1, -2), brewer.pal(4, "Blues")[c(1, 4)]),
+            title_position = "topleft", title = "Log2FC", direction = "horizontal"),
+     x = unit(190, "mm"), y = unit(30, "mm"))
+dev.off()
+
+
+
+circos.clear()
+circos.par("start.degree" = 90,
+           'gap.degree' = 2,
+           'canvas.ylim' = c(-1.5, 1.5),
+           'cell.padding' = c(0, 0, 0, 0))
+circos.initialize(sectors = circos.dat$sector,
+                  xlim = cbind(rep(0, 4), circos.dat$length))
+circos.track(ylim = c(0, 1), bg.border = NA, track.height = 0.1,
+             panel.fun = function(x, y){
+               circos.rect(xleft = CELL_META$xlim[1], xright = CELL_META$xlim[2],
+                           ybottom = 1-circos.dat$height[CELL_META$sector.numeric.index], ytop = 1,
+                           col = circos.dat$color[CELL_META$sector.numeric.index])
+             })
+
+gene.link.idx <- rep(1, length(gene_list))
+names(gene.link.idx) <- gene_list
+for (i in 1:nrow(circos.dat)) {
+  # i = 2
+  # circos.par("track.height" = circos.dat$height[i],
+  #            "start.degree" = 90,
+  #            'gap.degree' = 2,
+  #            'canvas.ylim' = c(-1.5, 1.5),
+  #            'cell.padding' = c(0, 0, 0, 0))
+  
+  if (circos.dat$cat[i] == "Gene") {
+    circos.text(9, 1, labels = circos.dat$sector[i],
+                facing = "clockwise", niceFacing = T,
+                font = 2, adj = c(-0.1),
+                sector.index = circos.dat$sector[i])
+  }
+  
+  # link
+  if (nchar(circos.dat$link[i]) > 1) {
+    targe.genes <- str_split(circos.dat$link[i], ",", simplify = T) %>% .[1,]
+    for (j in 1:length(targe.genes)) {
+      # the j-th link for the target gene
+      # 计算link终点的起止坐标
+      unit.length <- 180 / length(gene_list) / circos.dat$link_count[circos.dat$sector == targe.genes[j]]
+      x0 = (gene.link.idx[targe.genes[j]] - 1) * unit.length
+      x1 = gene.link.idx[targe.genes[j]] * unit.length
+      circos.link(sector.index1 = circos.dat$sector[i],
+                  point1 = c((j - 1) * 180 / total.link.count, j * 180 / total.link.count),
+                  sector.index2 = targe.genes[j],
+                  point2 = c(x0, x1),
+                  col = brewer.pal(8, "Set2")[i],
+                  border = "black")
+      
+      gene.link.idx[targe.genes[j]] <- gene.link.idx[targe.genes[j]] + 1
+    }
+  }
+}
+
+
+# add legend for go term
+legend(x = 1.1, y = .5, 
+       title = "GO Terms",
+       title.adj = 0.05,
+       title.cex = 1.2,
+       title.font = 2,
+       text.font = 2,
+       cex = 1,
+       legend = circos.dat$sector[circos.dat$cat != "Gene"], 
+       fill = circos.dat$color[circos.dat$cat != "Gene"],
+       bty = "n" #remove out box,
+)
+
+draw(Legend(at = c(-1, -1.5, -2), break_dist = 5, labels = c("-1", "        ", "-2"),
+            labels_gp = gpar(font = 2, cex = 1.1),
+            title_gp = gpar(font = 2, cex = 1.2),
+            col_fun = colorRamp2(c(-1, -2), brewer.pal(4, "Blues")[c(1, 4)]),
+            title_position = "topleft", title = "Log2FC", direction = "horizontal"),
+     x = unit(190, "mm"), y = unit(30, "mm"))
+
+
+
+```
+
+
+
+
+
 \newpage
 
 # Session information

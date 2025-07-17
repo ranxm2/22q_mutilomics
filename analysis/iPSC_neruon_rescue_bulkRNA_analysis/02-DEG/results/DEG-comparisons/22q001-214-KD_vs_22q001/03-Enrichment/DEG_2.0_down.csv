@@ -1,0 +1,3 @@
+"query","significant","p_value","term_size","query_size","intersection_size","precision","recall","term_id","source","term_name","effective_domain_size","source_order","evidence_codes","intersection","intersection_gene","intersection_gene_id","term"
+"query_1",TRUE,0.00221696718888564,4,1,1,1,0.25,"CORUM:6819","CORUM","APOL1 complex A (APOL1, APOA1, HPR, C3)",3383,2392,"CORUM","APOL1","APOL1","ENSG00000100342","CORUM - APOL1 complex A (APOL1, APOA1, HPR, C3)"
+"query_1",TRUE,0.00221696718888564,5,1,1,1,0.2,"CORUM:6820","CORUM","APOL1 complex B (APOL1, APOA1, HPR, FN1, IGHM)",3383,2393,"CORUM","APOL1","APOL1","ENSG00000100342","CORUM - APOL1 complex B (APOL1, APOA1, HPR, FN1, IGHM)"

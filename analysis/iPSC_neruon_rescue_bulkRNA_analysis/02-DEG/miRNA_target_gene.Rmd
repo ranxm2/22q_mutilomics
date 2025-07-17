@@ -1,0 +1,757 @@
+---
+title: "Analysis mutil Group"
+author: "Ximing Ran"
+date: "2025-07-02"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: false
+  html_document:
+    # code_folding: hide
+    toc: true
+    toc_float: true
+hitheme: tomorrow
+highlighter: highlight.js
+
+---
+
+```{r setup, include=FALSE}
+# load libraries
+library(tidyverse)
+library(knitr)
+set.seed(2024)
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.path = "./results/01-All-group/Analysis_figure/"
+)
+
+theme_set(theme_bw() + theme(legend.position = "bottom"))
+knitr::kable(head(mtcars[, 1:4]), "simple")
+```
+
+```{r}
+library(tibble)
+library(tidyr)
+library(dplyr)
+library(rtracklayer)
+```
+
+
+
+```{r local_function_load}
+# load function from local files
+source(here::here("source", "DEG_functions.R"))
+```
+
+\newpage
+
+# 1. Read the count data
+In this section, we will read the clean count data from the synaptosomes_bulkRNA folder.  We will read the data and merge them into a single table. 
+
+```{r load_bulkRNA_data}
+input_count <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                      "bulkRNA_counts_cleaned.csv"))
+counts <-  as.data.frame(input_count) %>% 
+  column_to_rownames(var = "gene")
+colnames(counts) <- gsub("-", "_", colnames(counts))
+# replacte the first X in the colnames
+colnames(counts) <- gsub("^X", "", colnames(counts))
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                      "sample_info.csv")) %>%
+                    mutate(condition = Diagnosis) 
+
+sample_list_raw$Sample.name <- gsub("-", "_", sample_list_raw$Sample.name)
+# Ensure the column names of counts exist in Sample.name
+new_colnames <- sample_list_raw$Sample.ID..[match(colnames(counts), sample_list_raw$Sample.name )]
+
+# Assign new column names
+colnames(counts) <- new_colnames
+
+
+# sort the columns by the colname
+condition_list <- data.frame(
+  group =sample_list_raw$condition
+)
+
+row.names(condition_list) <- sample_list_raw$Sample.ID..
+
+counts<- counts[, rownames(condition_list)]
+
+gene_name_mapping<- readRDS(here::here("data","ref" ,"gene_name_mapping.rds"))
+
+
+```
+
+
+
+```{r DESeq2_analysis}
+# Init the result folder structure for the result
+result_folder_all = './results'
+result_folder = result_folder_all
+
+```
+
+
+\newpage
+
+# 2. Visualization for reuslt
+
+## (1) Sample information - PCA plot
+
+```{r Sample_PCA, fig.width=8, fig.height=6}
+figure_folder = result_folder
+# do PCA for counts data
+dds_obj <- DESeqDataSetFromMatrix(countData = counts,
+                                  colData = condition_list,
+                                  design = ~ group)
+vsd.obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+pcaData <- plotPCA(vsd.obj,  intgroup = c("group"), returnData = T)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+
+
+p <-ggplot(pcaData, aes(PC1, PC2, color=group)) +
+  geom_point(size=3) +
+  labs(x = paste0("PC1: ",percentVar[1],"% variance"),
+       y = paste0("PC2: ",percentVar[2],"% variance"),
+  ) +
+  stat_ellipse(level = 0.95)+
+  theme_bw() +
+  # theme_classic()+
+  theme(text = element_text(family = "Arial", colour = "black")) +
+  # scale_color_manual(values = assigned_colors) +
+  ggrepel::geom_text_repel(aes(label = name), color = "black")
+
+print(p)
+# ggsave("./results/01-Sample_info/01_sample_PCA_plot.pdf", p,width = 8, height = 6, units = "in", dpi = 300)
+# ggsave("./results/01-Sample_info/01_sample_PCA_plot.png", p,width = 8, height = 6, units = "in", dpi = 300)
+#   
+```
+
+
+
+
+
+
+## (2) Sample information - Distance heatmap
+
+```{r Sample_dis_Heatmap, fig.width=12, fig.height=10}
+ # Now apply variance stabilizing transformation
+ sampleDists <- dist(t(assay(vsd.obj)))
+ sampleDistMatrix <- as.matrix( sampleDists )
+ rownames(sampleDistMatrix) <- paste( vsd.obj$group )
+ colors <- colorRampPalette( rev(RColorBrewer::brewer.pal(9, "Blues")) )(255)
+ p <- pheatmap::pheatmap(sampleDistMatrix,
+                         clustering_distance_rows = sampleDists,
+                         clustering_distance_cols = sampleDists,
+                         col = colors) 
+print(p)
+
+#  ggsave("./results/01-Sample_info/02_sample_distance_heatmap.pdf", p,width = 8, height = 6, units = "in", dpi = 300)
+# ggsave("./results/01-Sample_info/02_sample_distance_heatmap.png",
+#        p, width = 8, height = 6, units = "in", dpi = 300)
+
+```
+
+
+```{r}
+library(pheatmap)
+# Define group comparisons
+comparisons <- list(
+  c("22q001-185-OE", "22q001"),
+  c("22q002-185-OE", "22q002"),
+  c("22q002-128-OE", "22q002"),
+  c("004-214-OE", "004"),
+  c("007-214-OE", "007"),
+  c("004-185-KD", "004"),
+  c("007-185-KD", "007"),
+  c("004-128-KD", "004"),
+  c("007-128-KD", "007"),
+  c("22q001-214-KD", "22q001"),
+  c("22q002-214-KD", "22q002"),
+  c("22q001-DGCR8-OE", "22q001"),
+  c("22q002-DGCR8-OE", "22q002")
+)  
+
+padj_to_stars <- function(p) {
+    if (is.na(p)) return("") # handle NA
+    if (p < 0.001) return(" (***)")
+    else if (p < 0.01) return(" (**)")
+    else if (p < 0.05) return(" (*)")
+    else return("")
+  }
+```
+
+
+```{r miRNA_plot_214, fig.width=5, fig.height=6}
+target_gene_214 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                      "hsa-miR-214-3p_up_enrichment_GO_BP.csv"), stringsAsFactors = FALSE)
+
+gene_list <- unique(target_gene_214$intersection_gene) 
+
+comparisons_214 <- list(
+  c("004-214-OE", "004"),
+  c("007-214-OE", "007"),
+  c("22q001-214-KD", "22q001"),
+  c("22q002-214-KD", "22q002")
+)
+
+# Paths
+result_root <- "./results/DEG-comparisons"
+dir.create(result_root, showWarnings = FALSE)
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                      "sample_info.csv")) %>%
+                    mutate(condition = Diagnosis, 
+                           sample_name = gsub("-", "_", Sample.ID..),
+                           group = Diagnosis)
+
+
+pair <- comparisons_214 [[1]]
+
+
+# Loop over comparisons
+for (pair in comparisons_214 ) {
+  compare_group <- pair[1]
+  reference_group <- pair[2]
+  pair_name <- paste0(compare_group, "_vs_", reference_group)
+  cat("Processing:", pair_name, "\n")
+  
+  result_folder <- file.path(result_root, pair_name)
+  
+  
+  compare_group <- pair[1]
+  reference_group <- pair[2]
+  pair_name <- paste0(compare_group, "_vs_", reference_group)
+  cat("Processing:", pair_name, "\n")
+
+  # Set thresholds dynamically
+  if (grepl("DGCR8", compare_group, ignore.case = TRUE)) {
+    thresholds <- c(1.5, 2)
+  } else {
+    thresholds <- c(0.5, 1, 1.5)
+  }
+
+  # Set result folder
+  result_folder <- file.path(result_root, pair_name)
+  Result_folder_structure(result_folder)
+
+  # Filter samples and counts
+  filter_sample_info <- condition_list %>% filter(group %in% c(reference_group, compare_group))
+  filter_counts <- counts[, rownames(filter_sample_info)]
+  
+  dds_obj <- DEAnalysis(
+    counts = filter_counts,
+    reference_group = reference_group,
+    compare_group = compare_group,
+    condition_list = filter_sample_info,
+    target_gene = NULL,
+    result_folder = result_folder
+  )
+  
+  vsd_obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+
+   # make the color scale
+  brewer_palette <- "RdBu"
+  ramp <- colorRampPalette( RColorBrewer::brewer.pal(11, brewer_palette))
+  mr <- ramp(256)[256:1]
+  
+  # color map
+  unique_groups <- c(reference_group, compare_group)
+  color_palette <- c("#10d5da","#fe867f")  # Extend this list if you have more groups
+  assigned_colors <- setNames(color_palette[seq_along(unique_groups)], unique_groups)
+  annotation_colors <- list(group = assigned_colors)
+  annotation_col <- as.data.frame(colData(vsd_obj)[, "group", drop = FALSE])
+
+  stabilized_counts <- assay(vsd_obj)
+  row_variances <- rowVars(stabilized_counts)
+  stabilized_counts <- stabilized_counts - rowMeans(stabilized_counts, na.rm=T)
+  stabilized_counts <- stabilized_counts[gene_list, rownames(annotation_col)]
+  
+  # normalized counts
+  normalized_counts <- assay(vsd_obj)[gene_list, rownames(annotation_col)]
+  
+  # Transpose counts to long format: rows = samples, columns = genes
+  normalized_counts_t <- t(normalized_counts)
+  
+  # Make sure sample order matches
+  stopifnot(all(rownames(normalized_counts_t) == rownames(filter_sample_info)))
+  
+  # Extract group labels
+  group <- filter_sample_info$group
+  
+  # Initialize result dataframe
+  t_results <- data.frame(
+    gene = rownames(normalized_counts),
+    p_value = NA_real_,
+    stringsAsFactors = FALSE
+  )
+  
+  # Loop through each gene
+  for (i in seq_along(rownames(normalized_counts))) {
+    gene <- rownames(normalized_counts)[i]
+    values <- normalized_counts_t[, gene]
+    
+    group1 <- values[group == reference_group]
+    group2 <- values[group == compare_group]
+    
+    test <- t.test(group1, group2, var.equal = FALSE)
+    
+    t_results$p_value[i] <- test$p.value
+  }
+  
+  # Adjust p-values for multiple testing
+  t_results$padj <- p.adjust(t_results$p_value, method = "BH")
+  
+  # Add significance stars
+  t_results$signif <- cut(
+    t_results$ p_value,
+    breaks = c(-Inf, 0.001, 0.01, 0.05, Inf),
+    labels = c("***", "**", "*", ""),
+    right = FALSE
+  )
+  
+
+
+
+  # Extract padj values and store by gene name
+  padj <- t_results$p_value
+  names(padj) <- t_results$gene
+  
+  # Function to assign stars based on padj
+  padj_to_stars <- function(gene) {
+    if (!gene %in% names(padj)) return("")        # if gene is not in DESeq_results
+    p <- padj[gene]
+    if (is.na(p)) return("")                      # handle NA
+    if (p < 0.001) return(" (***)")
+    else if (p < 0.01) return(" (**)")
+    else if (p < 0.05) return(" (*)")
+    else return("")
+  }
+  
+  # Create new rownames with stars
+  new_rownames <- paste0(rownames(stabilized_counts), sapply(rownames(stabilized_counts), padj_to_stars))
+  
+  # Assign new row names to the matrix
+  rownames(stabilized_counts) <- new_rownames
+
+
+  
+  p <- pheatmap::pheatmap(stabilized_counts,
+                           color = mr,
+                           scale = "row",
+                           annotation_col = annotation_col,
+                           annotation_colors = annotation_colors,
+                           cluster_rows = TRUE,
+                           cluster_cols = FALSE,
+                           fontsize_col = 10,
+                           fontsize_row = 10,
+                           treeheight_row = 0,
+                           show_rownames = TRUE,
+                           border_color = NA)
+    
+# save the result to the result_folder with 06_miRNA target
+
+  ggsave(file.path("rescue_target_gene", paste0(pair_name, "_miRNA_target_heatmap.pdf")),
+         p, width = 5, height = 6, units = "in", dpi = 300)
+  ggsave(file.path("rescue_target_gene", paste0(pair_name, "_miRNA_target_heatmap.png")),
+         p, width = 5, height = 6, units = "in", dpi = 300)
+
+
+  cat("Finished:", pair_name, "\n\n")
+}
+
+
+
+
+
+```
+
+\newpage
+
+```{r miRNA_plot_128, fig.width=5, fig.height=12}
+target_gene_128 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                      "hsa-miR-128-3p_down_enrichment_GO_BP.csv"), stringsAsFactors = FALSE)
+
+gene_list <- unique(target_gene_128$intersection_gene) 
+
+comparisons_128 <- list(
+  c("22q002-128-OE", "22q002"),
+  c("004-128-KD", "004"),
+  c("007-128-KD", "007")
+)  
+# Paths
+result_root <- "./results/DEG-comparisons"
+dir.create(result_root, showWarnings = FALSE)
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                      "sample_info.csv")) %>%
+                    mutate(condition = Diagnosis, 
+                           sample_name = gsub("-", "_", Sample.ID..),
+                           group = Diagnosis)
+
+
+# Loop over comparisons
+for (pair in comparisons_128 ) {
+  compare_group <- pair[1]
+  reference_group <- pair[2]
+  pair_name <- paste0(compare_group, "_vs_", reference_group)
+  cat("Processing:", pair_name, "\n")
+  
+  result_folder <- file.path(result_root, pair_name)
+  
+  
+  compare_group <- pair[1]
+  reference_group <- pair[2]
+  pair_name <- paste0(compare_group, "_vs_", reference_group)
+  cat("Processing:", pair_name, "\n")
+
+  # Set thresholds dynamically
+  if (grepl("DGCR8", compare_group, ignore.case = TRUE)) {
+    thresholds <- c(1.5, 2)
+  } else {
+    thresholds <- c(0.5, 1, 1.5)
+  }
+
+  # Set result folder
+  result_folder <- file.path(result_root, pair_name)
+  Result_folder_structure(result_folder)
+
+  # Filter samples and counts
+  filter_sample_info <- condition_list %>% filter(group %in% c(reference_group, compare_group))
+  filter_counts <- counts[, rownames(filter_sample_info)]
+  
+  dds_obj <- DEAnalysis(
+    counts = filter_counts,
+    reference_group = reference_group,
+    compare_group = compare_group,
+    condition_list = filter_sample_info,
+    target_gene = NULL,
+    result_folder = result_folder
+  )
+  
+  vsd_obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+
+   # make the color scale
+  brewer_palette <- "RdBu"
+  ramp <- colorRampPalette( RColorBrewer::brewer.pal(11, brewer_palette))
+  mr <- ramp(256)[256:1]
+  
+  # color map
+  unique_groups <- c(reference_group, compare_group)
+  color_palette <- c("#10d5da","#fe867f")  # Extend this list if you have more groups
+  assigned_colors <- setNames(color_palette[seq_along(unique_groups)], unique_groups)
+  annotation_colors <- list(group = assigned_colors)
+  annotation_col <- as.data.frame(colData(vsd_obj)[, "group", drop = FALSE])
+
+  stabilized_counts <- assay(vsd_obj)
+  row_variances <- rowVars(stabilized_counts)
+  stabilized_counts <- stabilized_counts - rowMeans(stabilized_counts, na.rm=T)
+  overlap_genes <- intersect(gene_list, rownames(stabilized_counts))
+  stabilized_counts <- stabilized_counts[overlap_genes , rownames(annotation_col)]
+  
+  # normalized counts
+  normalized_counts <- assay(vsd_obj)[overlap_genes, rownames(annotation_col)]
+  
+  # Transpose counts to long format: rows = samples, columns = genes
+  normalized_counts_t <- t(normalized_counts)
+  
+  # Make sure sample order matches
+  stopifnot(all(rownames(normalized_counts_t) == rownames(filter_sample_info)))
+  
+  # Extract group labels
+  group <- filter_sample_info$group
+  
+  # Initialize result dataframe
+  t_results <- data.frame(
+    gene = rownames(normalized_counts),
+    p_value = NA_real_,
+    stringsAsFactors = FALSE
+  )
+  
+  # Loop through each gene
+  for (i in seq_along(rownames(normalized_counts))) {
+    gene <- rownames(normalized_counts)[i]
+    values <- normalized_counts_t[, gene]
+    
+    group1 <- values[group == reference_group]
+    group2 <- values[group == compare_group]
+    
+    test <- t.test(group1, group2, var.equal = FALSE)
+    
+    t_results$p_value[i] <- test$p.value
+  }
+  
+  # Adjust p-values for multiple testing
+  t_results$padj <- p.adjust(t_results$p_value, method = "BH")
+  
+  # Add significance stars
+  t_results$signif <- cut(
+    t_results$ p_value,
+    breaks = c(-Inf, 0.001, 0.01, 0.05, Inf),
+    labels = c("***", "**", "*", ""),
+    right = FALSE
+  )
+  
+
+
+
+  # Extract padj values and store by gene name
+  padj <- t_results$p_value
+  names(padj) <- t_results$gene
+  
+  # Function to assign stars based on padj
+  padj_to_stars <- function(gene) {
+    if (!gene %in% names(padj)) return("")        # if gene is not in DESeq_results
+    p <- padj[gene]
+    if (is.na(p)) return("")                      # handle NA
+    if (p < 0.001) return(" (***)")
+    else if (p < 0.01) return(" (**)")
+    else if (p < 0.05) return(" (*)")
+    else return("")
+  }
+  
+  # Create new rownames with stars
+  new_rownames <- paste0(rownames(stabilized_counts), sapply(rownames(stabilized_counts), padj_to_stars))
+  
+  # Assign new row names to the matrix
+  rownames(stabilized_counts) <- new_rownames
+
+
+  
+  p <- pheatmap::pheatmap(stabilized_counts,
+                           color = mr,
+                           scale = "row",
+                           annotation_col = annotation_col,
+                           annotation_colors = annotation_colors,
+                           cluster_rows = TRUE,
+                           cluster_cols = FALSE,
+                           fontsize_col = 10,
+                           fontsize_row = 10,
+                           treeheight_row = 0,
+                           show_rownames = TRUE,
+                           border_color = NA)
+    
+# save the result to the result_folder with 06_miRNA target
+  dir.create(file.path(result_folder, "06_miRNA_target"), showWarnings = FALSE)
+  
+  ggsave(file.path("rescue_target_gene", paste0(pair_name, "_miRNA_target_heatmap.pdf")),
+         p, width = 5, height = 12, units = "in", dpi = 300)
+  ggsave(file.path("rescue_target_gene", paste0(pair_name, "_miRNA_target_heatmap.png")),
+         p, width = 5, height = 12, units = "in", dpi = 300)
+
+
+
+  cat("Finished:", pair_name, "\n\n")
+}
+
+
+
+
+
+```
+
+\newpage
+
+
+
+```{r miRNA_plot_185, fig.width=5, fig.height=14}
+target_gene_185 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                      "hsa-miR-185-5p_down_enrichment_GO_BP.csv"), stringsAsFactors = FALSE)
+
+gene_list <- unique(target_gene_185$intersection_gene) 
+
+comparisons_185 <- list(
+  c("22q001-185-OE", "22q001"),
+  c("22q002-185-OE", "22q002"),
+  c("004-185-KD", "004"),
+  c("007-185-KD", "007")
+)  
+# Paths
+result_root <- "./results/DEG-comparisons"
+dir.create(result_root, showWarnings = FALSE)
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                      "sample_info.csv")) %>%
+                    mutate(condition = Diagnosis, 
+                           sample_name = gsub("-", "_", Sample.ID..),
+                           group = Diagnosis)
+
+
+# Loop over comparisons
+for (pair in comparisons_185 ) {
+  compare_group <- pair[1]
+  reference_group <- pair[2]
+  pair_name <- paste0(compare_group, "_vs_", reference_group)
+  cat("Processing:", pair_name, "\n")
+  
+  result_folder <- file.path(result_root, pair_name)
+  
+  
+  compare_group <- pair[1]
+  reference_group <- pair[2]
+  pair_name <- paste0(compare_group, "_vs_", reference_group)
+  cat("Processing:", pair_name, "\n")
+
+  # Set thresholds dynamically
+  if (grepl("DGCR8", compare_group, ignore.case = TRUE)) {
+    thresholds <- c(1.5, 2)
+  } else {
+    thresholds <- c(0.5, 1, 1.5)
+  }
+
+  # Set result folder
+  result_folder <- file.path(result_root, pair_name)
+  Result_folder_structure(result_folder)
+
+  # Filter samples and counts
+  filter_sample_info <- condition_list %>% filter(group %in% c(reference_group, compare_group))
+  filter_counts <- counts[, rownames(filter_sample_info)]
+  
+  dds_obj <- DEAnalysis(
+    counts = filter_counts,
+    reference_group = reference_group,
+    compare_group = compare_group,
+    condition_list = filter_sample_info,
+    target_gene = NULL,
+    result_folder = result_folder
+  )
+  
+  vsd_obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+
+   # make the color scale
+  brewer_palette <- "RdBu"
+  ramp <- colorRampPalette( RColorBrewer::brewer.pal(11, brewer_palette))
+  mr <- ramp(256)[256:1]
+  
+  # color map
+  unique_groups <- c(reference_group, compare_group)
+  color_palette <- c("#10d5da","#fe867f")  # Extend this list if you have more groups
+  assigned_colors <- setNames(color_palette[seq_along(unique_groups)], unique_groups)
+  annotation_colors <- list(group = assigned_colors)
+  annotation_col <- as.data.frame(colData(vsd_obj)[, "group", drop = FALSE])
+
+  stabilized_counts <- assay(vsd_obj)
+  row_variances <- rowVars(stabilized_counts)
+  stabilized_counts <- stabilized_counts - rowMeans(stabilized_counts, na.rm=T)
+  overlap_genes <- intersect(gene_list, rownames(stabilized_counts))
+  stabilized_counts <- stabilized_counts[overlap_genes , rownames(annotation_col)]
+  
+  # normalized counts
+  normalized_counts <- assay(vsd_obj)[overlap_genes, rownames(annotation_col)]
+  
+  # Transpose counts to long format: rows = samples, columns = genes
+  normalized_counts_t <- t(normalized_counts)
+  
+  # Make sure sample order matches
+  stopifnot(all(rownames(normalized_counts_t) == rownames(filter_sample_info)))
+  
+  # Extract group labels
+  group <- filter_sample_info$group
+  
+  # Initialize result dataframe
+  t_results <- data.frame(
+    gene = rownames(normalized_counts),
+    p_value = NA_real_,
+    stringsAsFactors = FALSE
+  )
+  
+  # Loop through each gene
+  for (i in seq_along(rownames(normalized_counts))) {
+    gene <- rownames(normalized_counts)[i]
+    values <- normalized_counts_t[, gene]
+    
+    group1 <- values[group == reference_group]
+    group2 <- values[group == compare_group]
+    
+    test <- t.test(group1, group2, var.equal = FALSE)
+    
+    t_results$p_value[i] <- test$p.value
+  }
+  
+  # Adjust p-values for multiple testing
+  t_results$padj <- p.adjust(t_results$p_value, method = "BH")
+  
+  # Add significance stars
+  t_results$signif <- cut(
+    t_results$ p_value,
+    breaks = c(-Inf, 0.001, 0.01, 0.05, Inf),
+    labels = c("***", "**", "*", ""),
+    right = FALSE
+  )
+  
+
+
+
+  # Extract padj values and store by gene name
+  padj <- t_results$p_value
+  names(padj) <- t_results$gene
+  
+  # Function to assign stars based on padj
+  padj_to_stars <- function(gene) {
+    if (!gene %in% names(padj)) return("")        # if gene is not in DESeq_results
+    p <- padj[gene]
+    if (is.na(p)) return("")                      # handle NA
+    if (p < 0.001) return(" (***)")
+    else if (p < 0.01) return(" (**)")
+    else if (p < 0.05) return(" (*)")
+    else return("")
+  }
+  
+  # Create new rownames with stars
+  new_rownames <- paste0(rownames(stabilized_counts), sapply(rownames(stabilized_counts), padj_to_stars))
+  
+  # Assign new row names to the matrix
+  rownames(stabilized_counts) <- new_rownames
+
+
+  
+  p <- pheatmap::pheatmap(stabilized_counts,
+                           color = mr,
+                           scale = "row",
+                           annotation_col = annotation_col,
+                           annotation_colors = annotation_colors,
+                           cluster_rows = TRUE,
+                           cluster_cols = FALSE,
+                           fontsize_col = 10,
+                           fontsize_row = 10,
+                           treeheight_row = 0,
+                           show_rownames = TRUE,
+                           border_color = NA)
+    
+# save the result to the result_folder with 06_miRNA target
+  dir.create(file.path(result_folder, "06_miRNA_target"), showWarnings = FALSE)
+  
+  ggsave(file.path("rescue_target_gene", paste0(pair_name, "_miRNA_target_heatmap.pdf")),
+         p, width = 5, height = 14, units = "in", dpi = 300)
+  ggsave(file.path("rescue_target_gene", paste0(pair_name, "_miRNA_target_heatmap.png")),
+         p, width = 5, height = 14, units = "in", dpi = 300)
+
+
+  cat("Finished:", pair_name, "\n\n")
+}
+
+
+
+
+
+```
+
+
+# Session information
+```{r}
+sessionInfo()
+```
+

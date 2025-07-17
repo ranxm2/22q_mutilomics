@@ -1,0 +1,491 @@
+---
+title: "Figrue for 2025-05-30"
+author: "Ximing Ran"
+date: "2025-05-30"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: false
+    latex_engine: xelatex
+  html_document:
+    # code_folding: hide
+    toc: true
+    toc_float: true
+hitheme: tomorrow
+highlighter: highlight.js
+
+---
+
+```{r setup, include=FALSE}
+# load libraries
+library(tidyverse)
+library(knitr)
+set.seed(2025)
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 9,
+  fig.height = 4,
+  fig.path = "result/01-Cluster_DEG/Analysis_plot"
+)
+
+theme_set(theme_bw() + theme(legend.position = "bottom"))
+knitr::kable(head(mtcars[, 1:4]), "simple")
+```
+
+```{r}
+library(tibble)
+library(tidyr)
+library(dplyr)
+library(rtracklayer)
+library(dplyr)
+# library(Seurat)
+library(Signac)
+library(EnsDb.Hsapiens.v86)
+library(ggplot2)
+library(cowplot)
+library(simspec)
+library(cowplot)
+library(AnnotationHub)
+library(Seurat)
+library(tidyverse)
+library(openxlsx)
+library(dplyr)
+library(conflicted)
+library(harmony)
+library(data.table)
+library(pheatmap)
+library(ggplot2)
+library(patchwork)
+library(extrafont)
+
+library(knitr)
+library(kableExtra)
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+
+conflict_prefer("filter", "dplyr")  # Prefer dplyr's filter()
+conflict_prefer("lag", "dplyr")     # Prefer dplyr's lag()
+
+```
+
+```{r local_function_load}
+# load function from local files
+# source(here::here("source", "sc_functions.R"))
+```
+
+
+\newpage
+# 1. Read the merged Data
+```{r load_merged_data}
+seruat_obj <- readRDS(here::here("data", "synaptosomes_scRNA", "04_merged_with_clustering_4_mannual_correct.rds"))
+
+
+```
+
+
+# 2. Plot the UMAP
+```{r UMAP_plot , fig.width=8, fig.height=5}
+Idents(seruat_obj) <- seruat_obj$seurat_clusters_merge
+# table(seruat_obj$seurat_clusters_merge)
+
+# swap the      Upper layer excitatory neurons  and Excitatory neurons 
+seruat_obj$seurat_clusters_merge <- recode(
+  seruat_obj$seurat_clusters_merge,
+  "Upper layer excitatory neurons" = "Excitatory neurons",
+  "Excitatory neurons" = "Upper layer excitatory neurons"
+)
+
+
+seruat_obj$cluster_num <-as.integer(Idents(seruat_obj))-1
+
+# 1. Grab your existing cell-type names
+orig_types <- levels(Idents(seruat_obj))
+
+# 2. Build a mapping from cell type → number
+num_map <- setNames(seq_along(orig_types)-1, orig_types)
+
+seruat_obj$cluster_annot <- factor(
+  paste0(seruat_obj$cluster_num, "-", as.character(seruat_obj$seurat_clusters_merge))
+)
+
+table(seruat_obj$cluster_annot)
+
+# recode the 22Q into the 22q11DS
+
+seruat_obj$group_annot <- recode(
+  seruat_obj$group,
+  "22Q" = "22q11DS"
+) 
+# relevel the factor to have CTRL first
+seruat_obj$group_annot <- factor(
+  seruat_obj$group_annot,
+  levels = c("CTRL", "22q11DS")
+)
+
+
+
+
+
+Idents(seruat_obj) <- "cluster_annot"
+
+# 5. Base UMAP (no labels) with transparent backgrounds
+umap_plot <- DimPlot(
+  seruat_obj,
+  reduction = "umap",
+  # group.by = "cluster_annot", 
+  # split.by = "group_annot",
+  label   = FALSE,
+  repel   = TRUE
+) 
+
+# subset the part before the -
+umap_plot$data$num <- sub("-.*", "", umap_plot$data$ident)
+umap_plot$data$num <- factor(umap_plot$data$num, levels = seq(0, 9))
+
+# 3) Call LabelClusters with id = "ident"
+umap_plot_labeled <- LabelClusters(
+  plot     = umap_plot,
+  id       = "num",   # the data column that holds "0".."9"
+  # clusters = src,       # which groups to annotate
+  # labels   = anno,      # what text to put in place of each "0".."9"
+  repel    = FALSE,
+  size     = 4
+) 
+
+umap_plot_labeled <- umap_plot_labeled +
+  theme(
+    panel.background  = element_rect(fill = "transparent", colour = NA),
+    plot.background   = element_rect(fill = "transparent", colour = NA),
+    legend.background = element_rect(fill = "transparent", colour = NA)
+  )
+
+
+ggsave(
+  filename = "result/02-Figure/UMAP_labeled_annotated_all.png",
+  plot     = umap_plot_labeled,
+  width    = 8,
+  height   = 5,
+  dpi      = 300,
+  bg       = "transparent"   # <-- this makes the PNG background transparent
+)
+
+# save to pdf
+ggsave(
+  filename = "result/02-Figure/UMAP_labeled_annotated_all.pdf",
+  plot     = umap_plot_labeled,
+  width    = 8,
+  height   = 5
+)
+
+print(umap_plot_labeled)
+```
+
+```{r UMAP_plot_group , fig.width=12, fig.height=5}
+# 4. Use the new annotated factor as your Idents()
+Idents(seruat_obj) <- "cluster_annot"
+
+# 5. Base UMAP (no labels) with transparent backgrounds
+umap_plot <- DimPlot(
+  seruat_obj,
+  reduction = "umap",
+  # group.by = "cluster_annot", 
+  split.by = "group_annot",
+  label   = FALSE,
+  repel   = TRUE
+) 
+
+# subset the part before the -
+umap_plot$data$num <- sub("-.*", "", umap_plot$data$ident)
+umap_plot$data$num <- factor(umap_plot$data$num, levels = seq(0, 9))
+
+# 3) Call LabelClusters with id = "ident"
+umap_plot_labeled <- LabelClusters(
+  plot     = umap_plot,
+  id       = "num",   # the data column that holds "0".."9"
+  # clusters = src,       # which groups to annotate
+  # labels   = anno,      # what text to put in place of each "0".."9"
+  repel    = FALSE,
+  size     = 4
+) 
+
+umap_plot_labeled <- umap_plot_labeled +
+  theme(
+    panel.background  = element_rect(fill = "transparent", colour = NA),
+    plot.background   = element_rect(fill = "transparent", colour = NA),
+    legend.background = element_rect(fill = "transparent", colour = NA)
+  )
+
+ggsave(
+  filename = "result/02-Figure/UMAP_labeled_annotated.png",
+  plot     = umap_plot_labeled,
+  width    = 12,
+  height   = 5,
+  dpi      = 300,
+  bg       = "transparent"   # <-- this makes the PNG background transparent
+)
+
+# save to pdf
+ggsave(
+  filename = "result/02-Figure/UMAP_labeled_annotated.pdf",
+  plot     = umap_plot_labeled,
+  width    = 12,
+  height   = 5
+)
+
+
+
+print(umap_plot_labeled)
+```
+
+# 3. Plot the cell_type proportion
+```{r cell_type_proportion, fig.width=8, fig.height=5}
+library(dplyr)
+
+
+seruat_obj@meta.data %>%
+  group_by(cluster_num,group_annot) %>%
+  count() %>%
+  group_by(group_annot) %>%
+  mutate(percent = n / sum(n) * 100) %>%
+  mutate(group = factor(group_annot, levels = c("CTRL", "22q11DS")),
+         x = as.numeric(cluster_num)) %>%
+  ggplot() +
+  geom_bar(aes(x = x, y = y),
+           stat = "identity", fill = "pink", alpha = 0.5,
+           width = 1,
+           data = data.frame(x = c(0, 3, 4, 7, 9),
+                             y = 30)) +
+  geom_bar(aes(x = x, y = percent,
+               group = group,fill = group),
+           width = 0.8,
+           stat = "identity", position = position_dodge()) +
+  scale_fill_manual(values = c("#00BFC4", "#F8766D")) +
+  scale_y_continuous(limits = c(-4, 30), expand = expansion(add = c(0, 0))) +
+  geom_point(mapping = aes(x, y, color = as.factor(x)),
+             size = 7,
+             data = data.frame(x = 0:9, y = -2),
+             show.legend = F) +
+  geom_text(mapping = aes(x, y, label = x),
+            data = data.frame(x = 0:9, y = -2),
+            show.legend = F) +
+  geom_hline(yintercept = 0, linewidth = 0.2) +
+  xlab("Cluster") + ylab("Percentage") +
+  theme_bw(base_size = 12, base_family = "Arial") +
+  # theme_classic(base_size = 12, base_family = "Arial") +
+  theme(axis.text = element_text(color = "black"),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()
+  ) +
+  theme(
+    panel.background  = element_rect(fill = "transparent", colour = NA),
+    plot.background   = element_rect(fill = "transparent", colour = NA),
+    legend.background = element_rect(fill = "transparent", colour = NA)
+  ) -> p
+
+print(p)
+
+
+ggsave(
+  filename = "result/02-Figure/cell_type_proportion.png",
+  plot     = p,
+  width    = 8,
+  height   = 5,
+  dpi      = 300,
+  bg       = "transparent"   # <-- this makes the PNG background transparent
+)
+
+# save to pdf
+ggsave(
+  filename = "result/02-Figure/cell_type_proportion.pdf",
+  plot     = p,
+  width    = 8,
+  height   = 5,
+  bg       = "transparent" 
+)
+
+
+
+```
+
+
+# 4. DEG
+```{r DEG, fig.width=8, fig.height=5}
+merged <- seruat_obj
+####################### cluster DEG
+merged$orig.group <- ifelse(merged$orig.ident %in% c("C1", "C2"), "CTRL", "22q")
+merged$deg_group <- paste0(merged$orig.group, "_", merged$seurat_clusters_merge)
+table(merged$deg_group)
+
+DefaultAssay(merged) <- "RNA"
+Idents(merged) <- "deg_group"
+lapply(unique(merged$seurat_clusters_merge), function(cl){
+  print(cl)
+  g1 <- paste0("CTRL_", cl)
+  g2 <- paste0("22q_", cl)
+  deg <- FindMarkers(merged, ident.1 = g1, ident.2 = g2)
+  deg$cluster <- cl
+  deg$gene <- rownames(deg)
+  deg
+}) -> deg_list
+names(deg_list) <- paste0(unique(merged$seurat_clusters_merge))
+
+# make. avg_log2FC the -avg_log2FC
+deg_list <- lapply(deg_list, function(deg){
+  deg$avg_log2FC <- -deg$avg_log2FC
+  deg
+})
+
+
+
+
+library(stringr)
+# assume deg_list is a named list, one element per cluster
+old_names <- names(deg_list)
+# truncate every name to at most 31 characters (no “…”)
+new_names <- str_trunc(old_names, width = 31, side = "right", ellipsis = "")
+names(deg_list) <- new_names
+
+
+
+```
+
+```{r DEG_summary, fig.width=8, fig.height=4}
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(purrr)
+
+# your vector of logFC cutoffs
+logFCs <- c( 0.25, 0.5, 1)
+
+for (th in logFCs) {
+  
+# 1. tally up/down per cluster at this threshold
+counts_df <- imap_dfr(deg_list, ~{
+  df2 <- .x %>%
+    filter(p_val_adj < 0.05, abs(avg_log2FC) > th)
+  tibble(
+    cluster = .y,
+    up      = sum(df2$avg_log2FC >  0, na.rm = TRUE),
+    down    = sum(df2$avg_log2FC <  0, na.rm = TRUE)
+  )
+})
+
+# 2. pivot longer and make 'down' negative
+counts_long <- counts_df %>%
+  pivot_longer(c(up, down), names_to = "direction", values_to = "n") %>%
+  mutate(
+    n         = ifelse(direction == "down", -n, n),
+    direction = factor(direction, levels = c("down","up"))
+  )
+
+
+
+
+# 2) Build a vector of the “short” prefixes for matching
+orig_short <- sub(" .*", "", orig_types)
+#    orig_short == c("Upper","Excitatory","Outer","Unknown","Astrocyte",…,"Immature")
+
+# 3) In your counts_long DF, extract the same short prefix
+counts_long$cluster_short <- sub(" .*", "", counts_long$cluster)
+
+# 4) Now match each counts_long prefix to the original, and subtract 1 for 0-based
+counts_long$cluster <- match(counts_long$cluster_short, orig_short) - 1
+# turn it into a factor
+counts_long$cluster <- factor(counts_long$cluster)
+# reverse the order so it matches the original
+counts_long$cluster <- factor(counts_long$cluster, levels = rev(levels(counts_long$cluster)))
+ 
+
+# 3. build the plot
+p<- ggplot(counts_long, aes(x = n, y = cluster, fill = direction)) +
+  geom_col(width = 0.7) +
+  geom_text(
+    aes(
+      x     = n,
+      label = abs(n),
+      hjust = ifelse(direction == "up", -0.1, 1.1)
+    ),
+    size = 5
+  ) +
+  # 
+  # geom_point(
+  #   aes(x = x, y = y, color = as.factor(label)),
+  #   data = data.frame(x = -3500, y = 1:10,   label = 9:0),
+  #   size = 7,
+  #   show.legend = FALSE,
+  #   inherit.aes = FALSE
+  # ) +
+  # geom_text(
+  #   aes(x = x, y = y, label = label),
+  #   data = data.frame(x = -3500, y = 1:10,   label = 9:0),
+#   size = 3,
+#   show.legend = FALSE,
+#   inherit.aes = FALSE
+# ) +
+# reverse the default hue order
+scale_color_hue(direction = -1) +
+  scale_x_continuous(
+    labels = abs,
+    expand = expansion(add = c(max(abs(counts_long$n)) * 0.2,
+                               max(abs(counts_long$n)) * 0.2))
+  ) +
+  scale_fill_manual(
+    values = c(down = "steelblue", up = "firebrick"),
+    labels = c("Down-regulated", "Up-regulated")
+  ) +
+  labs(
+    x    = "Number of DE genes",
+    y    = NULL,
+    fill = "Direction"
+  ) +
+  theme_bw(base_size = 14, base_family = "Arial") +
+  theme(
+    legend.position  = "top",
+    axis.text.y      = element_text(size = 14),  # no need to set color unless you want to
+    panel.border     = element_rect(color = "black", fill = NA),
+    plot.margin      = margin(5, 30, 5, 5, "pt")
+  )+
+  # scale_y_discrete(labels = NULL)+
+  coord_cartesian(clip = "off")
+print(p)
+
+ggsave(
+  filename = paste0("result/02-Figure/diverging_bar_logFC_", th, "_DEG.png"),
+  plot     = p,
+  width    = 8, 
+  height   = 6,
+  dpi      = 300
+)
+
+ggsave(
+  filename = paste0("result/02-Figure/diverging_bar_logFC_", th, "_DEG.pdf"),
+  plot     = p,
+  width    = 8, 
+  height   = 6
+)
+
+
+}
+
+
+
+
+
+
+
+```
+
+
+\newpage
+Session Information
+```{r session_info}
+sessionInfo()
+```
+

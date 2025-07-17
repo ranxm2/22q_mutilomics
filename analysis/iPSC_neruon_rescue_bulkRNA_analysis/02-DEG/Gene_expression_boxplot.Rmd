@@ -1,0 +1,272 @@
+---
+title: "Differential Expression Analysis for bulk RNA-seq data"
+subtitle: "Plot gene expression"
+author: "Ximing Ran"
+date: "2025-04-02"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: false
+  html_document:
+    # code_folding: hide
+    toc: true
+    toc_float: true
+hitheme: tomorrow
+highlighter: highlight.js
+
+---
+
+```{r setup, include=FALSE}
+# load libraries
+library(tidyverse)
+library(knitr)
+set.seed(2024)
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.path = "./results/Gene_expression_boxplot/Analysis_figure/"
+)
+
+theme_set(theme_bw() + theme(legend.position = "bottom"))
+knitr::kable(head(mtcars[, 1:4]), "simple")
+```
+
+```{r}
+library(tibble)
+library(tidyr)
+library(dplyr)
+library(rtracklayer)
+```
+
+
+
+```{r local_function_load}
+# load function from local files
+source(here::here("source", "DEG_functions.R"))
+
+
+
+plot_expression_boxplot_4_group<-  function(counts_matrix, condition_list_label, feature,
+                                            figure_folder, file_name, 
+                                            fig.height = 6, fig.width = 4,
+                                            save=TRUE,
+                                            group_1=NULL, group_2=NULL, group_3=NULL, group_4=NULL){
+  
+  # Sample list sub
+  sample_info <- condition_list_label %>%
+    mutate(sample = rownames(.)) %>%
+    filter(group %in% c(group_1, group_2, group_3, group_4))
+  
+  # Convert counts_matrix to a data frame and reshape
+  plot_df <- as.data.frame(counts_matrix) %>%
+    rownames_to_column(var = "expression") %>%
+    filter(expression == feature) %>%  # Select the specific pathway
+    pivot_longer(cols = -expression, names_to = "sample", values_to = "Normalized_Expression") %>%
+    dplyr::select(-expression)  %>% 
+    filter(sample %in% sample_info$sample)  %>%
+    left_join(sample_info, by = "sample")   %>% 
+    mutate(group = factor(group, levels = c(group_1, group_2, group_3, group_4)) )  # Define the factor levels
+  
+  
+  # Ensure colors are mapped to exact group names
+  color_palette <- setNames(c("#BAE3DC",  "#8DD2C5","#F6B3AC","#f47f72"),
+                            c(group_1, group_2, group_3, group_4))
+  
+  
+  # Process pathway name: remove first part, capitalize first letter, replace underscores with spaces
+  formatted_title <- feature 
+  
+  
+  score_max <- max(plot_df$Normalized_Expression)
+  score_scale <- abs(max(plot_df$Normalized_Expression) - min(plot_df$Normalized_Expression))*0.5
+  
+  
+  # Create the box plot with scatter overlay
+  p<-ggplot(plot_df, aes(x = group, y = Normalized_Expression)) +
+    geom_boxplot(aes(fill = group), alpha = 0.9, outlier.shape = NA, color = "black") +  # Box plot with fill color
+    geom_jitter(aes(fill = group), shape = 21, width = 0.2, size = 3, alpha = 0.9, color = "black") +  # Scatter points with fill color
+    # stat_summary(fun = mean, geom = "point", shape = 18, size = 4, color = "black") +  # Mean point
+    geom_signif(comparisons = list(c(group_1, group_2),
+                                   c(group_3, group_4)),
+                test = "t.test",
+                map_signif_level = TRUE,
+                y_position = c(score_max + 0.2*score_scale, score_max + 0.2*score_scale)) +
+    geom_signif(comparisons = list(c(group_1, group_3)),
+                test = "t.test",
+                map_signif_level = TRUE,
+                y_position = score_max + 0.4*score_scale) +
+    
+    geom_signif(comparisons = list(c(group_2, group_4)),
+                test = "t.test",
+                map_signif_level = TRUE,
+                y_position = score_max + 0.6*score_scale) +
+    
+    geom_signif(comparisons = list(c(group_1, group_4)),
+                test = "t.test",
+                map_signif_level = TRUE,
+                y_position = score_max + 0.8*score_scale) +
+    
+    scale_fill_manual(values = color_palette) +  # Apply custom colors to boxes & scatter dots
+    theme_classic(base_family = "Arial") +  # Use Arial font for all text
+    labs(title = formatted_title ,  # Use formatted pathway name
+         x = "",  # Remove x-axis label
+         y ="Normalized Expression" ) +
+    theme(
+      legend.position = "none",  # Optional: to hide the legend
+      plot.title = element_text(hjust = 0.5, size=15, color = "black" ),  # Align title to the left
+      axis.text.x = element_text(size = 15, angle=45, hjust=1, color = "black" ),
+      axis.text.y = element_text(size = 15, color = "black"),
+      title = element_text(size = 15, color = "black"),
+      panel.background = element_rect(fill = "transparent", color = NA),  # Transparent panel background
+      plot.background = element_rect(fill = "transparent", color = NA)    # Transparent plot background
+    )
+  
+  if (save){
+    
+    ggsave(file.path(figure_folder, paste0(file_name, ".png")), p,
+           width = fig.width, height = fig.height, units = "in", dpi = 300)
+    ggsave(file.path(figure_folder, paste0(file_name, ".pdf")), p,
+           width = fig.width, height = fig.height, units = "in")}
+  
+  return(p)
+  
+}
+
+
+
+
+
+
+```
+
+\newpage
+
+# 1. Read the count data
+In this section, we will read the clean count data from the synaptosomes_bulkRNA folder.  We will read the data and merge them into a single table. The final table will be stored in `../dataresults/bulkRNA_counts_clean.csv`.
+
+```{r load_bulkRNA_data}
+input_count <- read.csv(here::here("data", "bulkRNA",
+                                      "bulkRNA_counts_cleaned.csv"))
+counts <-  as.data.frame(input_count) %>% 
+  column_to_rownames(var = "gene")
+colnames(counts) <- gsub("_", "-", colnames(counts))
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "bulkRNA",
+                                      "sample_info_AD.csv")) %>%
+                    mutate(condition = paste0(Diagosis, "_", Treatment),
+                           sample = gsub("_", "-", Sample.name))
+
+
+# Ensure the column names of counts exist in Sample.name
+new_colnames <- sample_list_raw$Label[match(colnames(counts), sample_list_raw$sample )]
+
+# Assign new column names
+colnames(counts) <- new_colnames
+
+
+# sort the columns by the colname
+condition_list <- data.frame(
+  group =sample_list_raw$condition
+)
+
+row.names(condition_list) <- sample_list_raw$Label
+
+counts<- counts[, rownames(condition_list)]
+
+gene_name_mapping<- readRDS(here::here("data","ref" ,"gene_name_mapping.rds"))
+
+
+
+
+```
+
+
+# 2. Differential expression analysis
+
+In this section, we will perform differential expression analysis using DESeq2. We will compare the 22q vs Control in the vehicle condition. The results will be stored in `results/DEG-Vehicle/DESeq2_results.csv`.
+
+```{r DESeq2_analysis}
+# filter gene withall 0
+count_input <-  counts
+count_input <- count_input[rowSums(count_input) > 0, ]
+
+# Create a DESeq2 object
+dds_obj <- DESeqDataSetFromMatrix(countData = count_input,
+                              colData = condition_list,
+                              design = ~ group)
+
+# get the normalized count
+dds_obj <- DESeq(dds_obj)
+
+# Get the normalized count
+vsd.obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+normalized_count  <- assay(vsd.obj)
+
+
+
+condition_list_label <- condition_list 
+condition_list_label <- condition_list_label %>% 
+                        filter(group %in% c("CTRL_Veh_0", "CTRL_Veh_10", 
+                                              "AD_Veh_0", "AD_Veh_10"))
+
+
+condition_list_label$group <- fct_recode(condition_list_label$group,
+  "CTRL_Veh" = "CTRL_Veh_0",
+  "CTRL_10" = "CTRL_Veh_10",
+  "AD_Veh" = "AD_Veh_0",
+  "AD_10" = "AD_Veh_10"
+)
+
+
+condition_list_label$group <- factor(condition_list_label$group , levels = c( "AD_10","AD_Veh","CTRL_10","CTRL_Veh" ))
+
+
+```
+
+
+\newpage
+
+# 3. Visualization for reuslt
+
+
+
+```{r plot_gene_expression, fig.width=4, fig.height=6}
+
+gene_list <- c("CCKBR", "CCK", "ARHGAP30","INPP5D", "FCER1G", "TREM2", "CD33", "MS4A6A")
+
+# check if the gene is in the rownames of the normalized_count
+gene_list <- gene_list[gene_list %in% rownames(normalized_count)]
+
+
+for (index in 1:length(gene_list  )){
+  plot_gene<- gene_list [index]
+  
+  p<-plot_expression_boxplot_4_group(
+            counts_matrix = normalized_count, 
+            condition_list_label, feature =  plot_gene ,
+                                            figure_folder = file.path("results", "Gene_expression_boxplot", "Boxplot"),
+                                             file_name = paste0("gene_", plot_gene),
+                                              fig.height = 6, fig.width = 4,
+                                              save=TRUE,
+                                              group_1="CTRL_Veh", group_2="CTRL_10",
+                                              group_3="AD_Veh", group_4="AD_10")
+  print(p)
+  print(paste0("gene_", plot_gene))
+}
+
+
+```
+
+
+
+\newpage
+# Session information
+```{r}
+sessionInfo()
+```
+

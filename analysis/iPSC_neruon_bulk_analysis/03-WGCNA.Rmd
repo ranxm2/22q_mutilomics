@@ -1,0 +1,1006 @@
+---
+title: "WGCNA"
+subtitle: "Neuron"
+author: "Ximing Ran"
+date: "2025-05-15"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: false
+  html_document:
+    # code_folding: hide
+    toc: true
+    toc_float: true
+hitheme: tomorrow
+highlighter: highlight.js
+
+---
+
+```{r setup, include=FALSE}
+# load libraries
+library(tidyverse)
+library(knitr)
+set.seed(2025)
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.path = "./results/03-WGCNA/Analysis_figure/"
+)
+
+theme_set(theme_bw() + theme(legend.position = "bottom"))
+knitr::kable(head(mtcars[, 1:4]), "simple")
+```
+
+```{r}
+library(tibble)
+library(tidyr)
+library(dplyr)
+library(rtracklayer)
+library(WGCNA)
+```
+
+
+
+```{r local_function_load}
+# load function from local files
+source(here::here("source", "DEG_functions.R"))
+```
+
+\newpage
+
+# 1. Read the count data
+In this section, we will read the clean count data from the synaptosomes_miRNARNA folder. The data is stored in the format of `.csv`. We will read the data and filter the columns based on the condition list. The final table will be stored in `results/02-DEG-Vehicle/DESeq2_results.csv`.
+
+```{r load_bulkRNA_data}
+input_count <- read.csv(here::here("data", "neuron_bulkRNA",
+                                      "neuron_bulkRNA_counts_cleaned.csv"))
+counts <-  as.data.frame(input_count) %>% 
+  column_to_rownames(var = "gene")
+colnames(counts) <- gsub("-", "_", colnames(counts))
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA",
+                                      "sample_info.csv")) %>%
+                    mutate(condition = Diagnosis) 
+colnames(sample_list_raw) <- c("Raw", "SampleID", "Diagnosis","Condition")
+# order the sample list by Condition
+sample_list_raw <- arrange(sample_list_raw,  desc(Condition))
+
+sample_list_raw <- sample_list_raw %>% mutate(SampleID = gsub("-", "_", SampleID))
+
+# Ensure the column names of counts exist in Sample.name
+new_colnames <- sample_list_raw$SampleID[match(colnames(counts), sample_list_raw$SampleID)]
+
+# Assign new column names
+colnames(counts) <- new_colnames
+
+
+# sort the columns by the colname
+condition_list <- data.frame(
+  group = sample_list_raw$Condition
+)
+
+row.names(condition_list) <- sample_list_raw$SampleID
+
+counts<- counts[, rownames(condition_list)]
+
+# load the 22q gene_list
+target_22q_gene <- read.csv(here::here("data","ref" ,"22q_gene_2024_10_17.csv"))
+target_gene <- target_22q_gene$gene
+target_gene <- target_gene[1:(length(target_gene) - 4)]
+
+gene_name_mapping<- readRDS(here::here("data","ref" ,"gene_name_mapping.rds"))
+
+
+
+# load the DEG with logFC 1.0
+DEG_1.0 <- read.csv("results/02-DEG/02-DEG/02_DEG_log2fc_1.csv")
+# counts <- counts[rownames(counts) %in% DEG_1.0 $gene, ]
+
+```
+
+
+# 2. Normalization to RPKMs
+
+```{r normalization}
+library(countToFPKM)
+
+
+count_input <-  counts
+count_input <- count_input[rowSums(count_input) > 0, ]
+
+gene_length <- read.csv(here::here("data", "ref",
+                                   "gene_lengths.csv"))
+# filter the rows with gene names not empty
+gene_length <- gene_length %>% filter(!is.na(gene_name))
+
+
+
+
+# 1. Match gene lengths to the rows of count_input
+idx <- match(rownames(count_input), gene_length$gene_name)
+if (any(is.na(idx))) {
+  stop("Some genes in count_input have no matching entry in gene_length")
+}
+length_kb <- gene_length$gene_length[idx] / 1000  # bases to kilobases
+
+# 2. Compute library sizes in millions of reads
+lib_sizes <- colSums(count_input)
+lib_size_million <- lib_sizes / 1e6
+
+# 3. Compute FPKM
+#    First divide counts by library size (in millions), then divide by gene length (in kb)
+fpkm_step1 <- sweep(count_input, 2, lib_size_million, FUN = "/")
+fpkm     <- sweep(fpkm_step1,    1, length_kb,       FUN = "/")
+
+
+
+
+```
+
+
+
+# 2. WGCNA analysis
+
+
+
+
+```{r find_power, fig.width=8, fig.height=4}
+
+library(WGCNA)
+allowWGCNAThreads()          # allow multi-threading (optional)
+#> Allowing multi-threading with up to 4 threads.
+
+# Choose a set of soft-thresholding powers
+powers = c(c(1:10), seq(from = 12, to = 20, by = 2))
+
+
+input_mat = t(fpkm)
+# Call the network topology analysis function
+sft = pickSoftThreshold(
+  input_mat ,             # <= Input data
+  # blockSize = 30,
+  powerVector = powers,
+  verbose = 5
+  )
+
+
+par(mfrow = c(1,2));
+cex1 = 0.9;
+
+plot(sft$fitIndices[, 1],
+     -sign(sft$fitIndices[, 3]) * sft$fitIndices[, 2],
+     xlab = "Soft Threshold (power)",
+     ylab = "Scale Free Topology Model Fit, signed R^2",
+     main = paste("Scale independence")
+)
+text(sft$fitIndices[, 1],
+     -sign(sft$fitIndices[, 3]) * sft$fitIndices[, 2],
+     labels = powers, cex = cex1, col = "red"
+)
+abline(h = 0.6, col = "red")
+plot(sft$fitIndices[, 1],
+     sft$fitIndices[, 5],
+     xlab = "Soft Threshold (power)",
+     ylab = "Mean Connectivity",
+     type = "n",
+     main = paste("Mean connectivity")
+)
+text(sft$fitIndices[, 1],
+     sft$fitIndices[, 5],
+     labels = powers,
+     cex = cex1, col = "red")
+
+
+```
+
+
+```{r build_network}
+picked_power = 7
+temp_cor <- cor       
+cor <- WGCNA::cor         # Force it to use WGCNA cor function (fix a namespace conflict issue)
+netwk <- blockwiseModules(input_mat,                # <= input here
+
+                          # == Adjacency Function ==
+                          power = picked_power,                # <= power here
+                          networkType = "signed",
+
+                          # == Tree and Block Options ==
+                          # deepSplit = 2,
+                          # pamRespectsDendro = F,
+                          # detectCutHeight = 0.75,
+                          minModuleSize = 30,
+                          # maxBlockSize = 4000,
+
+                          # == Module Adjustments ==
+                          # reassignThreshold = 0,
+                          # mergeCutHeight = 0.25,
+
+                          # == TOM == Archive the run results in TOM file (saves time)
+                          saveTOMs = T,
+                          saveTOMFileBase = "ER",
+
+                          # == Output Options
+                          numericLabels = T,
+                          verbose = 3)
+```
+
+```{r plot_dendrogram, fig.width=8, fig.height=4}
+# Convert labels to colors for plotting
+mergedColors = labels2colors(netwk$colors)
+
+# Plot the dendrogram and the module colors underneath
+# …before plotting, load your libraries, etc.
+library(WGCNA)
+
+# create a transparent‐bg PDF via Cairo
+cairo_pdf(
+  filename = file.path("results", "03-WGCNA", "1.dendrogram.pdf"),
+  width    = 15,
+  height   = 8,
+  bg       = "transparent"
+)
+
+# make sure the plotting region itself is transparent
+par(bg = NA)
+
+# your dendrogram + module‐color strip
+plotDendroAndColors(
+  netwk$dendrograms[[1]],
+  mergedColors[netwk$blockGenes[[1]]],
+  "Module colors",
+  dendroLabels = FALSE,
+  hang         = 0.03,
+  addGuide     = TRUE,
+  guideHang    = 0.05
+)
+
+dev.off()
+
+
+
+#––– PNG with transparent background (raster) –––#
+png(
+  filename = file.path("results", "03-WGCNA", "1.dendrogram.png"),
+  width    = 15,
+  height   = 8,
+  units    = "in",       # inches
+  res      = 300,        # 300 DPI
+  bg       = "transparent"
+)
+par(bg = NA)
+plotDendroAndColors(
+  netwk$dendrograms[[1]],
+  mergedColors[netwk$blockGenes[[1]]],
+  "Module colors",
+  dendroLabels = FALSE,
+  hang         = 0.03,
+  addGuide     = TRUE,
+  guideHang    = 0.05
+)
+dev.off()
+
+```
+
+
+
+```{r module_eigengenes}
+MEs0 <- moduleEigengenes(input_mat, mergedColors)$eigengenes
+
+table(mergedColors)
+length(unique(mergedColors))
+
+# save the genes for each module
+module_genes <- data.frame(
+  gene = colnames(input_mat),
+  module = mergedColors
+)
+
+
+# sort the genes by module
+module_genes <- module_genes %>% arrange(module)
+# save the module genes
+write.csv(module_genes, file = "results/03-WGCNA/module_genes.csv", row.names = F)
+
+
+
+# do the module eigengene analysis
+moduleTraitCor = cor(MEs0, condition_list, use = "p")
+dim(condition_list)
+
+
+
+
+# 1. Combine MEs and group labels into one data.frame
+library(tibble)
+library(dplyr)
+library(tidyr)
+library(broom)
+
+# assume MEs0 is your eigengene matrix and condition_list is a data.frame with rownames sample IDs
+dat <- MEs0 %>%
+  rownames_to_column("sample") %>%                # bring sample IDs into a column
+  as_tibble() %>%
+  left_join(
+    condition_list %>% rownames_to_column("sample"),
+    by = "sample"
+  ) %>%
+  pivot_longer(
+    cols = starts_with("ME"),
+    names_to = "module",
+    values_to = "eigengene"
+  )
+
+# 2. Perform a two‐sample t‐test for each module
+module_tests <- dat %>%
+  group_by(module) %>%
+  do(tidy(t.test(eigengene ~ group, data = .))) %>%
+  ungroup()
+
+# 3. Adjust p‐values across modules (e.g. FDR)
+module_tests <- module_tests %>%
+  mutate(p.adj = p.adjust(p.value, method = "fdr")) %>%
+  arrange(p.adj)
+
+# 4. Inspect
+module_tests %>% dplyr::select(module, estimate1, estimate2, statistic, p.value, p.adj)
+
+# save the results
+write.csv(module_tests, file = "results/03-WGCNA/module_trait_difference.csv", row.names = F)
+
+
+
+```
+
+
+
+
+```{r module_trait_correlation}
+# 1. Prepare trait as numeric (0 = CTRL_Vehicle, 1 = 22q_Vehicle)
+trait <- ifelse(condition_list$group == "22q", 1, 0)
+
+# 2. Compute Pearson correlation and p-value for each module
+corr_list <- lapply(
+  X   = colnames(MEs0),
+  FUN = function(mod) {
+    ct <- cor.test(MEs0[, mod], trait, method = "pearson")
+    data.frame(
+      module    = mod,
+      cor       = unname(ct$estimate),
+      p.value   = ct$p.value
+    )
+  }
+)
+corr_df <- do.call(rbind, corr_list)
+
+# 3. Adjust p-values for multiple testing
+corr_df <- corr_df %>%
+  arrange(p.value) %>%
+  mutate(p.adj = p.adjust(p.value, method = "fdr"))
+
+
+```
+
+
+```{r module_trait_correlation2}
+library(WGCNA)
+# wrap trait in a data.frame
+traits <- data.frame(group = trait)
+
+# compute module–trait correlations and p-values
+moduleTraitCor    <- cor(MEs0, traits, use = "p")
+moduleTraitPvalue <- corPvalueStudent(moduleTraitCor, nSamples = nrow(MEs0))
+
+# turn into a tidy table
+corr_df2 <- data.frame(
+  module  = rownames(moduleTraitCor),
+  cor     = as.numeric(moduleTraitCor),
+  p.value = as.numeric(moduleTraitPvalue)
+) %>%
+  arrange(p.value) %>%
+  mutate(p.adj = p.adjust(p.value, method = "fdr"))
+
+# inspect
+corr_df2
+# save the results
+
+write.csv(corr_df2, file = "results/03-WGCNA/module_trait_correlation.csv", row.names = F)
+```
+
+
+
+```{r heatmap, fig.width=6, fig.height=12}
+# # 1. Compute module–trait correlations and p‐values (if you haven't already)
+# library(WGCNA)
+# # prepare trait as numeric: 0 = CTRL_Vehicle, 1 = 22q_Vehicle
+# traitNum <- ifelse(condition_list$group == "22q", 1, 0)
+# traits   <- data.frame(Phenotype = traitNum)
+# 
+# # calculate correlation and Student’s p‐value
+# moduleTraitCor    <- cor(MEs0, traits, use = "p")
+# moduleTraitPvalue <- corPvalueStudent(moduleTraitCor, nSamples = nrow(MEs0))
+# 
+# # 2. Prepare a text matrix of “correlation (p‐value)”
+# textMatrix <- paste0(
+#   signif(moduleTraitCor, 2),
+#   "(",
+#   signif(moduleTraitPvalue, 1),
+#   ")"
+# )
+# dim(textMatrix) <- dim(moduleTraitCor)
+# rownames(textMatrix) <- rownames(moduleTraitCor)
+# colnames(textMatrix) <- colnames(moduleTraitCor)
+# 
+# # 3. Draw the heatmap
+# # labeledHeatmap(
+# #   Matrix       = moduleTraitCor,
+# #   xLabels      = colnames(traits),
+# #   yLabels      = rownames(moduleTraitCor),
+# #   colorLabels  = FALSE,
+# #   colors       = colorRampPalette(c("blue", "white", "red"))(50),
+# #   textMatrix   = textMatrix,
+# #   setStdMargins= FALSE,
+# #   cex.text     = 0.6,
+# #   zlim         = c(-1, 1),
+# #   main         = "Module–Trait Correlations\n(cor, p value)"
+# # )
+# 
+# 
+# # —— after computing moduleTraitCor & moduleTraitPvalue and building textMatrix ——
+# 
+# # 1. Get p-values for your single trait column
+# pv <- moduleTraitPvalue[, 1]
+# 
+# # 2. Determine module order by increasing p-value
+# ord <- order(pv)
+# 
+# # 3. Reorder all matrices
+# moduleTraitCor  <- moduleTraitCor[ord, , drop = FALSE]
+# moduleTraitPvalue <- moduleTraitPvalue[ord, , drop = FALSE]
+# textMatrix      <- textMatrix[ord, , drop = FALSE]
+# 
+# # —— now draw the heatmap with modules sorted by p-value ——
+# 
+# # labeledHeatmap(
+# #   Matrix        = moduleTraitCor,
+# #   xLabels       = colnames(traits),
+# #   yLabels       = rownames(moduleTraitCor),
+# #   colorLabels   = FALSE,
+# #   colors        = colorRampPalette(c("blue", "white", "red"))(50),
+# #   textMatrix    = textMatrix,
+# #   setStdMargins = FALSE,
+# #   cex.text      = 0.6,
+# #   zlim          = c(-1, 1),
+# #   main          = "Module–Trait Correlations\n(sorted by p-value)"
+# # )
+
+
+
+# 1. Compute module–trait correlations & p-values
+library(WGCNA)
+traitNum          <- ifelse(condition_list$group == "22q", 1, 0)
+traits            <- data.frame(Phenotype = traitNum)
+moduleTraitCor    <- cor(MEs0, traits, use = "p")
+moduleTraitPvalue <- corPvalueStudent(moduleTraitCor, nSamples = nrow(MEs0))
+
+# 2. Extract the p-values & compute stars
+pv    <- moduleTraitPvalue[, 1]
+stars <- ifelse(pv < 0.001, "***",
+         ifelse(pv < 0.01,  "**",
+         ifelse(pv < 0.05,  "*", "")))
+
+# 3. Order modules by ascending p-value
+ord <- order(pv)
+moduleTraitCor    <- moduleTraitCor[ord, , drop = FALSE]
+moduleTraitPvalue <- moduleTraitPvalue[ord, , drop = FALSE]
+stars             <- stars[ord]
+
+# 4. Build textMatrix: “correlation\n(p= p-value)stars”
+textMatrix <- matrix(
+  paste0(
+    signif(moduleTraitCor, 2), "",
+    "(p=", signif(moduleTraitPvalue, 1), ")",
+    stars
+  ),
+  nrow = nrow(moduleTraitCor),
+  ncol = ncol(moduleTraitCor),
+  dimnames = dimnames(moduleTraitCor)
+)
+
+# 5a. Plot with labeledHeatmap (from WGCNA)
+labeledHeatmap(
+  Matrix        = moduleTraitCor,
+  xLabels       = colnames(traits),
+  yLabels       = rownames(moduleTraitCor),
+  colorLabels   = FALSE,
+  colors        = colorRampPalette(c("blue", "white", "red"))(50),
+  textMatrix    = textMatrix,
+  setStdMargins = FALSE,
+  cex.text      = 0.6,
+  zlim          = c(-1, 1),
+  main          = "Module–Trait Correlations\n(cor, p-value, stars)"
+)
+
+# 5b. Or, using pheatmap
+library(pheatmap)
+pheatmap(
+  moduleTraitCor,
+  color           = colorRampPalette(c("blue","white","red"))(100),
+  breaks          = seq(-1, 1, length.out = 101),
+  display_numbers = textMatrix,
+  main            = "Module–Trait Correlations\n(cor, p-value, stars)",
+  cluster_rows    = FALSE,
+  cluster_cols    = FALSE
+)
+
+
+
+
+
+library(pheatmap)
+
+# 1. pull out module names + colours from your ME rownames
+moduleNames  <- sub("^ME", "", rownames(moduleTraitCor))
+moduleColors <- moduleNames   # each entry is e.g. "blue","turquoise",…
+
+# 2. make a one‐column data.frame for the row‐annotations
+annotation_row <- data.frame(Module = factor(moduleColors, levels = unique(moduleColors)))
+rownames(annotation_row) <- moduleNames
+
+# 3. build a named list telling pheatmap how to colour your Module factor
+ann_colors <- list(
+  Module = setNames(unique(moduleColors), unique(moduleColors))
+)
+
+# 4. draw!
+pheatmap(
+  moduleTraitCor,
+  color              = colorRampPalette(c("blue","white","red"))(50),
+  cluster_rows       = FALSE,
+  cluster_cols       = FALSE,
+  display_numbers    = textMatrix,
+  fontsize_number    = 6,
+  labels_row         = rownames(moduleTraitCor),
+  labels_col         = colnames(traits),
+  annotation_row     = annotation_row,
+  annotation_colors  = ann_colors,
+  annotation_legend  = FALSE,   # turn off module‐colour legend
+  legend             = TRUE,    # keep the heatmap colour legend
+  border_color       = "black",      # hide cell borders
+number_color = "black", # text colour for the numbers
+  main               = "Module–Trait Correlations\n(cor, p-value, stars)"
+)
+
+
+
+
+
+labeledHeatmap(
+  Matrix        = moduleTraitCor,
+  xLabels       = colnames(traits),
+  yLabels       = rownames(moduleTraitCor),
+  ySymbols      = rownames(moduleTraitCor),
+  colorLabels   = FALSE,
+  colors        = colorRampPalette(c("blue", "white", "red"))(50),
+  textMatrix    = textMatrix,
+  setStdMargins = FALSE,    # use your par(mar=…) settings
+  cex.text      = 0.6,
+  zlim          = c(-1.1, 1.1),
+  main          = "Module–Trait Correlations\n(cor, p-value, stars)"
+)
+
+
+
+
+
+#––––– Transparent PDF –––––#
+cairo_pdf(
+  filename = file.path("results", "03-WGCNA", "2.heatmap.pdf"),
+  width    = 6,
+  height   = 12,
+  bg       = "transparent",
+  family   = "Arial"
+)
+par(
+  bg  = NA,              # plot background transparent
+  mar = c(5, 12, 4, 2)    # bottom, left, top, right
+)
+labeledHeatmap(
+  Matrix        = moduleTraitCor,
+  xLabels       = colnames(traits),
+  yLabels       = rownames(moduleTraitCor),
+  ySymbols      = rownames(moduleTraitCor),
+  colorLabels   = FALSE,
+  colors        = colorRampPalette(c("blue", "white", "red"))(50),
+  textMatrix    = textMatrix,
+  setStdMargins = FALSE,    # respect our par(mar)
+  cex.text      = 0.6,
+  zlim          = c(-1, 1),
+  main          = "Module–Trait Correlations\n(cor, p-value, stars)"
+)
+dev.off()
+
+#––––– Transparent PNG –––––#
+png(
+  filename = file.path("results", "03-WGCNA", "2.heatmap.png"),
+  width    = 6,
+  height   = 12,
+  units    = "in",
+  res      = 300,          # adjust DPI as needed
+  bg       = "transparent",
+  
+  family   = "Arial"
+)
+par(
+  bg  = NA,
+  mar = c(5, 12, 4, 2)
+)
+labeledHeatmap(
+  Matrix        = moduleTraitCor,
+  xLabels       = colnames(traits),
+  yLabels       = rownames(moduleTraitCor),
+  ySymbols      = rownames(moduleTraitCor),
+  colorLabels   = FALSE,
+  colors        = colorRampPalette(c("blue", "white", "red"))(50),
+  textMatrix    = textMatrix,
+  setStdMargins = FALSE,
+  cex.text      = 0.6,
+  zlim          = c(-1, 1),
+  main          = "Module–Trait Correlations\n(cor, p-value, stars)"
+)
+dev.off()
+
+
+
+```
+
+
+
+```{r}
+# # Required libraries
+# library(clusterProfiler)
+# library(org.Hs.eg.db)        # change if non-human
+# library(dplyr)
+# library(ggplot2)
+# 
+# # Your input: a data.frame with columns gene (symbol) and module
+# # head(module_genes)
+# #        gene module
+# # 1     AADAT  black
+# # 2   ABHD17A  black
+# # ...
+# # Make sure gene symbols match org.Hs.eg.db
+# 
+# # Base output directory
+# base_dir <- "results/03-WGCNA/module_result"
+# 
+# # Get list of modules
+# modules <- unique(module_genes$module)
+# 
+# for (mod in modules) {
+#   # 1. Create module‐specific output dir
+#   outdir <- file.path(base_dir, mod)
+#   if (!dir.exists(outdir)) dir.create(outdir, recursive = TRUE)
+#   
+#   # 2. Extract gene list for this module
+#   genes_sym <- module_genes %>%
+#     filter(module == mod) %>%
+#     pull(gene) %>%
+#     unique()
+#   
+#   # 3. Map to Entrez IDs (required by clusterProfiler)
+#   gene_df <- bitr(
+#     genes_sym,
+#     fromType   = "SYMBOL",
+#     toType     = "ENTREZID",
+#     OrgDb      = org.Hs.eg.db
+#   )
+#   entrez_ids <- gene_df$ENTREZID
+#   
+#   # 4. Run GO enrichment (Biological Process here)
+#   ego <- enrichGO(
+#     gene          = entrez_ids,
+#     OrgDb         = org.Hs.eg.db,
+#     ont           = "BP",
+#     pAdjustMethod = "BH",
+#     pvalueCutoff  = 0.05,
+#     qvalueCutoff  = 0.2,
+#     readable      = TRUE
+#   )
+#   
+#   # 5. Save the full results table
+#   res_tbl <- as.data.frame(ego)
+#   write.csv(
+#     res_tbl,
+#     file = file.path(outdir, paste0(mod, "_GO_BP_enrichment.csv")),
+#     row.names = FALSE
+#   )
+#   
+#   # 6. Plot and save the top 20 terms as a dotplot
+#   p <- dotplot(ego, showCategory = 20) +
+#        ggtitle(paste0("Module ", mod, " — GO BP Enrichment"))
+#   
+#   ggsave(
+#     filename = file.path(outdir, paste0(mod, "_GO_BP_dotplot.png")),
+#     plot     = p,
+#     width    = 8, height = 6
+#   )
+#   
+#   message("Finished module: ", mod)
+# }
+# 
+# 
+# # make sure you have these loaded
+# library(dplyr)
+# 
+# # your module⇢gene mapping
+# # head(module_genes)
+# #        gene module
+# # 1     AADAT  black
+# # 2   ABHD17A  black
+# #  ...
+# 
+# # your gene_name_mapping object must already exist in your workspace
+# 
+# # Base directory for all module results
+# base_dir <- "results/03-WGCNA/module_result"
+# 
+# # Get the unique modules
+# modules <- unique(module_genes$module)
+# 
+# for (mod in modules) {
+#   
+#   # 1. Create the module-specific folder
+#   outdir <- file.path(base_dir, mod)
+#   if (!dir.exists(outdir)) {
+#     dir.create(outdir, recursive = TRUE)
+#   }
+#   
+#   # 2. Extract the gene symbols for this module
+#   gene_list <- module_genes %>%
+#     filter(module == mod) %>%
+#     pull(gene) %>%
+#     unique()
+#   
+#   # 3. Run your enrichment function
+#   Enrichment_analysis(
+#     gene_list         = gene_list,
+#     result_folder     = outdir,
+#     file_name         = paste0("module_", mod),
+#     gene_name_mapping = gene_name_mapping
+#     # flag defaults to "Up" – if you’d like a neutral color scale you can
+#     # pass flag = "None" (or any string other than "Up"/"Down")
+#   )
+#   
+#   message("Done enrichment for module: ", mod)
+# }
+
+
+```
+
+
+```{r enrichment_analysis, fig.width=8, fig.height=4}
+# ───────────────────────────────────────────────────────────────────────────────
+# 1. Load libraries
+# ───────────────────────────────────────────────────────────────────────────────
+library(WGCNA)         # for corPvalueStudent()
+library(gprofiler2)    # for gost() and map_genes()
+library(dplyr)         # for data manipulation
+library(ggplot2)       # for plotting
+
+# ───────────────────────────────────────────────────────────────────────────────
+# 2. Compute module–trait correlations & p‐values
+# ───────────────────────────────────────────────────────────────────────────────
+# (assumes MEs0 and condition_list are already in your environment)
+
+# Convert your group factor into a numeric trait
+traitNum <- ifelse(condition_list$group == "22q", 1, 0)
+traits   <- data.frame(Phenotype = traitNum)
+
+# Pearson correlations and Student’s p‐values
+moduleTraitCor    <- cor(MEs0, traits, use = "p")
+moduleTraitPvalue <- corPvalueStudent(moduleTraitCor,
+                                      nSamples = nrow(MEs0))
+
+# ───────────────────────────────────────────────────────────────────────────────
+# 3. Identify “significant” modules (raw p < 0.05)
+# ───────────────────────────────────────────────────────────────────────────────
+pv       <- moduleTraitPvalue[, 1]
+sig_mods <- rownames(moduleTraitPvalue)[pv < 0.05]
+
+# ───────────────────────────────────────────────────────────────────────────────
+# 4. Define the enrichment function (with 'parents'‐column fix)
+# ───────────────────────────────────────────────────────────────────────────────
+Enrichment_analysis <- function(gene_list,
+                                result_folder,
+                                file_name,
+                                gene_name_mapping,
+                                flag = "Up") {
+  # 4.1 Run g:Profiler
+  enrichment <- gost(
+    query             = gene_list,
+    organism          = "hsapiens",
+    correction_method = "fdr",
+    evcodes           = TRUE
+  )
+  
+  # 4.2 Drop the problematic 'parents' column
+  result <- enrichment$result %>%
+    dplyr::select(-parents)
+  
+  # 4.3 Map back to your original gene names (using gprofiler2 metadata)
+  result <- map_genes(
+    result,
+    enrichment$meta$genes_metadata$query$query_1$mapping,
+    gene_name_mapping
+  )
+  
+  # 4.4 Create a combined term label
+  result <- result %>%
+    mutate(term = sprintf("%s - %s", source, term_name))
+  
+  # 4.5 Save the full result table
+  write.csv(
+    result,
+    file.path(result_folder, paste0(file_name, ".csv")),
+    row.names = FALSE
+  )
+  message("Saved full enrichment for: ", file_name)
+  
+  # ─────────────────────────────────────────────────────────────────────────────
+  # 4.6 Plot top 30 pathways (all sources)
+  # ─────────────────────────────────────────────────────────────────────────────
+  top30 <- result %>%
+    dplyr::select(term, p_value) %>%
+    arrange(p_value) %>%
+    slice_head(n = 30) %>%
+    mutate(term = factor(term, levels = rev(term)))
+  
+  p <- ggplot(top30, aes(x = term, y = -log10(p_value), fill = -log10(p_value))) +
+    geom_bar(stat = "identity") +
+    { if (flag == "Up") {
+      scale_fill_gradient(high = "#a50f15", low = "#fc9272")
+    } else if (flag == "Down") {
+      scale_fill_gradient(low = "#56B1F7", high = "#132B43")
+    } else {
+      scale_fill_manual(values = rep("lightblue", nrow(top30)))
+    }
+    } +
+    ylab("-log10(FDR)") +
+    xlab("") +
+    ggtitle("Top 30 Pathways (Sorted by FDR)") +
+    coord_flip() +
+    theme_classic(base_size = 14) + theme(
+    axis.text   = element_text(color = "black"),
+    axis.title  = element_text(color = "black"),
+    legend.text = element_text(color = "black"),
+    legend.title= element_text(color = "black")
+  )+
+    theme(
+      text       = element_text(family = "Arial", size = 14, colour = "black"),
+      plot.title = element_text(face = "bold", hjust = 0.5),
+    panel.background = element_rect(fill = "transparent", colour = NA),
+    plot.background  = element_rect(fill = "transparent", colour = NA),
+    legend.background = element_rect(fill = "transparent", colour = NA)
+    ) +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed")
+  
+  ggsave(
+    filename = file.path(result_folder, paste0(file_name, "_top30_pathways.png")),
+    plot     = p, width = 12, height = 8, dpi = 300,
+    bg       = "transparent"
+  )
+  ggsave(
+    filename = file.path(result_folder, paste0(file_name, "_top30_pathways.pdf")),
+    plot     = p, width = 12, height = 8,
+    bg       = "transparent"
+  )
+
+  message("Plotted top 30 pathways for: ", file_name)
+  
+  # ─────────────────────────────────────────────────────────────────────────────
+  # 4.7 Subset to GO:BP, save & plot top 30
+  # ─────────────────────────────────────────────────────────────────────────────
+  go_bp <- result %>% filter(source == "GO:BP")
+  write.csv(
+    go_bp,
+    file.path(result_folder, paste0(file_name, "_GO_BP.csv")),
+    row.names = FALSE
+  )
+  
+  top30_bp <- go_bp %>%
+    dplyr::select(term, p_value) %>%
+    arrange(p_value) %>%
+    slice_head(n = 30) %>%
+    mutate(term = factor(term, levels = rev(term)))
+  
+  p2 <- ggplot(top30_bp, aes(x = term, y = -log10(p_value), fill = -log10(p_value))) +
+    geom_bar(stat = "identity") +
+    { if (flag == "Up") {
+      scale_fill_gradient(high = "#a50f15", low = "#fc9272")
+    } else if (flag == "Down") {
+      scale_fill_gradient(low = "#56B1F7", high = "#132B43")
+    } else {
+      scale_fill_manual(values = rep("lightblue", nrow(top30_bp)))
+    }
+    } +
+    ylab("-log10(FDR)") +
+    xlab("") +
+    ggtitle("Top 30 GO:BP Pathways (Sorted by FDR)") +
+    coord_flip() +
+    theme_classic(base_size = 14) +
+    theme(
+      text       = element_text(family = "Arial", size = 14, colour = "black"),
+      plot.title = element_text(face = "bold", hjust = 0.5)
+    ) + theme(
+    axis.text   = element_text(color = "black"),
+    axis.title  = element_text(color = "black"),
+    legend.text = element_text(color = "black"),
+    legend.title= element_text(color = "black"),
+    panel.background = element_rect(fill = "transparent", colour = NA),
+    plot.background  = element_rect(fill = "transparent", colour = NA),
+    legend.background = element_rect(fill = "transparent", colour = NA)
+  )+
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed")
+  
+  ggsave(file.path(result_folder,
+                   paste0(file_name, "_top30_pathways_GOBP.png")),
+         p2, width = 12, height = 8, dpi = 300,
+  bg       = "transparent")
+  ggsave(file.path(result_folder,
+                   paste0(file_name, "_top30_pathways_GOBP.pdf")),
+         p2, width = 12, height = 8,
+  bg       = "transparent")
+  message("Plotted GO:BP top 30 for: ", file_name)
+}
+
+# ───────────────────────────────────────────────────────────────────────────────
+# 5. Loop over significant modules
+# ───────────────────────────────────────────────────────────────────────────────
+base_dir <- "results/03-WGCNA/module_result"
+
+for (mod in sig_mods) {
+  print(sprintf("Processing module: %s", mod))
+  outdir <- file.path(base_dir, mod)
+  if (!dir.exists(outdir)) dir.create(outdir, recursive = TRUE)
+  
+  # 2) get the correlation value for this module → phenotype
+  cor_val <- moduleTraitCor[mod, "Phenotype"]      # or [,1] if 'Phenotype' is column 1
+  flag    <- if (cor_val > 0) "Up" else "Down"
+  
+  mod <- gsub("^ME", "", mod)  # remove "ME" prefix from module name
+  
+  gene_list <- module_genes %>%
+    filter(module == mod) %>%
+    pull(gene) %>%
+    unique()
+  
+  unique(module_genes$module)
+  
+
+  
+  Enrichment_analysis(
+    gene_list         = gene_list,
+    result_folder     = outdir,
+    file_name         = paste0("module_", mod),
+    gene_name_mapping = gene_name_mapping,
+    flag              =   flag 
+  )
+  
+  message("Enrichment done for module: ", mod)
+}
+
+```
+
+
+
+\newpage
+# Session information
+```{r}
+sessionInfo()
+```
+

@@ -1,0 +1,3 @@
+"query","significant","p_value","term_size","query_size","intersection_size","precision","recall","term_id","source","term_name","effective_domain_size","source_order","evidence_codes","intersection","intersection_gene","intersection_gene_id","term"
+"query_1",TRUE,0.0017735737511082,3,1,1,1,0.333333333333333,"CORUM:6417","CORUM","Fibrinogen complex",3383,2112,"CORUM","FGB","FGB","ENSG00000171564","CORUM - Fibrinogen complex"
+"query_1",TRUE,0.0255252366014654,137,20,3,0.15,0.0218978102189781,"GO:0072562","GO:CC","blood microparticle",22115,2756,"HDA IEA,HDA,HDA","FGB,IGKV1-17,PRSS1","FGB,IGKV1-17,PRSS1","ENSG00000171564,ENSG00000240382,ENSG00000204983","GO:CC - blood microparticle"

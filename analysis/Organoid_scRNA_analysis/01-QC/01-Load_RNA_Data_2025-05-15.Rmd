@@ -1,0 +1,219 @@
+---
+title: "Quality Control for scRNA seq data"
+subtitle: "Load and Merge the data"
+author: "Ximing Ran"
+date: "2025-05-15"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: false
+  html_document:
+    # code_folding: hide
+    toc: true
+    toc_float: true
+hitheme: tomorrow
+highlighter: highlight.js
+
+---
+
+```{r setup, include=FALSE}
+# load libraries
+library(tidyverse)
+library(knitr)
+set.seed(2025)
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 9,
+  fig.height = 4,
+  fig.path = "./results/QC-analysis-RNA-plot/"
+)
+
+theme_set(theme_bw() + theme(legend.position = "bottom"))
+knitr::kable(head(mtcars[, 1:4]), "simple")
+```
+
+```{r}
+library(tibble)
+library(tidyr)
+library(dplyr)
+library(rtracklayer)
+library(dplyr)
+library(Seurat)
+library(Signac)
+library(EnsDb.Hsapiens.v86)
+library(ggplot2)
+library(cowplot)
+library(simspec)
+library(cowplot)
+library(AnnotationHub)
+
+```
+
+
+
+```{r local_function_load}
+# load function from local files
+
+```
+
+
+```{r local_reference_load}
+# load data from local files
+
+library(Seurat)
+
+
+```
+
+
+\newpage
+
+# 1. Read the Raw Data
+
+In this section, we will read the raw data from the cellranger-arc output files. We have 4 samples: PSZ-6, TSC-tube, TSC-edge, and CTRL. We will rename the samples as CTRL, TSC-tuber, TSC-edge, and TSC-outside, respectively. 
+
+
+```{r load_raw_data_TSC}
+# load data from cellranger and perform basic QC
+library(Seurat)
+library(tidyverse)
+library(data.table)
+library(scDblFinder)
+library(cowplot)
+
+options(Seurat.object.assay.version = "v5")
+
+### read sample meta information
+sample_meta <-  c('p24020_Lyra_NovaSeqS4-s001_C1', 
+                  'p24020_Lyra_NovaSeqS4-s002_C2',
+                  'p24020_Lyra_NovaSeqS4-s003_C3',
+                  'p24020_Lyra_NovaSeqS4-s004_Q1',
+                  'p24020_Lyra_NovaSeqS4-s005_Q2',
+                  'p24020_Lyra_NovaSeqS4-s006_Q3')
+                  
+sample_meta_short <- c("C1","C2","C3","Q1","Q2","Q3")
+### read cellranger out into Seurat object
+lapply(1:length(sample_meta), function(i) {
+  print(i)
+  h5 <- sprintf(
+    "../../../data/synaptosomes_scRNA/raw/%s/outs/filtered_feature_bc_matrix.h5",
+    sample_meta[i])
+  print(h5)
+  
+  obj_count <- Read10X_h5(h5)
+  
+  obj <- CreateSeuratObject(
+    counts =  obj_count ,
+    project = sample_meta_short[i],
+    assay = "RNA"
+  )
+ 
+
+  
+  obj$group <- sample_meta_short[i]
+  # # add sample name to cell id
+  obj <- RenameCells(obj, add.cell.id = sample_meta_short[i])
+  obj
+}) -> sample_seurat_list
+
+
+names(sample_seurat_list) <- sample_meta_short
+
+
+```
+\newpage
+
+# 2. QC for data
+
+```{r QC, fig.height=12, fig.width=9}
+
+### Data QC
+lapply(1:length(sample_seurat_list), function(i) {
+  print(i)
+  obj <- sample_seurat_list[[i]]
+  print(sample_meta_short[i])
+  # show how many cells are in the object
+  print(paste0("Number of cells before QC: ", ncol(obj)))
+  obj$percent.mt <- PercentageFeatureSet(obj, pattern = "^MT-")
+  
+  # before QC plot
+  p_before<-VlnPlot(obj,
+          features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),
+          ncol = 3
+  )
+
+
+  
+  # pull out the raw count matrix from your Seurat object
+  raw_counts <- obj[["RNA"]]$counts
+  
+  # build a minimal SCE
+  sce <- SingleCellExperiment(
+    assays = list(counts = raw_counts)
+  )
+  
+  # now run doublet detection
+  sce <- scDblFinder(sce)
+  
+
+  assertthat::are_equal(colnames(sce), colnames(obj))
+  obj$scDblFinder.class <- sce$scDblFinder.class
+  
+  # QC for RNA
+  obj <- subset(obj,
+                subset =
+                  nFeature_RNA > 200 &
+                  nFeature_RNA < 10000 &
+                  percent.mt < 20 &
+                  scDblFinder.class == "singlet"
+  )
+  
+  # after QC plot
+  p_after<-VlnPlot(obj,
+          features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),
+          ncol = 3
+  )
+
+  # combine before and after QC plots
+  p <- plot_grid(p_before, p_after,
+                 # labels = c("A", "B"),
+                 # label_size = 12,
+                 ncol = 1
+  )
+  
+  # show how many cells are left after QC
+  print(paste0("Number of cells after QC: ", ncol(obj)))
+  ggsave(sprintf("./results/RNA_%s_QC.png", sample_meta_short[i]),p,
+         height = 12, width = 9
+  )
+  obj
+}) -> sample_seurat_list
+
+names(sample_seurat_list) <- sample_meta_short
+
+# save clean data
+saveRDS(sample_seurat_list,
+        file = here::here("data", "synaptosomes_scRNA",
+                          "sample_seurat_RNA_list_2025-05-15.rds"),
+        compress = F,
+)
+
+saveRDS(sample_meta_short,
+        file = here::here("data", "synaptosomes_scRNA",
+                          "sample_meta_RNA_2025-05-15.rds"),
+)
+
+
+```
+
+
+
+\newpage
+```{r}
+sessionInfo()
+```
+

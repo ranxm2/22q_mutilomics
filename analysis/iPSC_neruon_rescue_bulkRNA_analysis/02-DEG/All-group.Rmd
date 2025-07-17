@@ -1,0 +1,731 @@
+---
+title: "Analysis mutil Group"
+author: "Ximing Ran"
+date: "2025-07-02"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: false
+  html_document:
+    # code_folding: hide
+    toc: true
+    toc_float: true
+hitheme: tomorrow
+highlighter: highlight.js
+
+---
+
+```{r setup, include=FALSE}
+# load libraries
+library(tidyverse)
+library(knitr)
+set.seed(2024)
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.path = "./results/01-All-group/Analysis_figure/"
+)
+
+theme_set(theme_bw() + theme(legend.position = "bottom"))
+knitr::kable(head(mtcars[, 1:4]), "simple")
+```
+
+```{r}
+library(tibble)
+library(tidyr)
+library(dplyr)
+library(rtracklayer)
+```
+
+
+
+```{r local_function_load}
+# load function from local files
+source(here::here("source", "DEG_functions.R"))
+```
+
+\newpage
+
+# 1. Read the count data
+In this section, we will read the clean count data from the synaptosomes_bulkRNA folder.  We will read the data and merge them into a single table. 
+
+```{r load_bulkRNA_data}
+input_count <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                      "bulkRNA_counts_cleaned.csv"))
+counts <-  as.data.frame(input_count) %>% 
+  column_to_rownames(var = "gene")
+colnames(counts) <- gsub("-", "_", colnames(counts))
+# replacte the first X in the colnames
+colnames(counts) <- gsub("^X", "", colnames(counts))
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                      "sample_info.csv")) %>%
+                    mutate(condition = Diagnosis) 
+
+sample_list_raw$Sample.name <- gsub("-", "_", sample_list_raw$Sample.name)
+# Ensure the column names of counts exist in Sample.name
+new_colnames <- sample_list_raw$Sample.ID..[match(colnames(counts), sample_list_raw$Sample.name )]
+
+# Assign new column names
+colnames(counts) <- new_colnames
+
+
+# sort the columns by the colname
+condition_list <- data.frame(
+  group =sample_list_raw$condition
+)
+
+row.names(condition_list) <- sample_list_raw$Sample.ID..
+
+counts<- counts[, rownames(condition_list)]
+
+gene_name_mapping<- readRDS(here::here("data","ref" ,"gene_name_mapping.rds"))
+
+
+```
+
+
+
+```{r DESeq2_analysis}
+# Init the result folder structure for the result
+result_folder_all = './results'
+result_folder = result_folder_all
+
+```
+
+
+\newpage
+
+# 2. Visualization for reuslt
+
+## (1) Sample information - PCA plot
+
+```{r Sample_PCA, fig.width=8, fig.height=6}
+figure_folder = result_folder
+# do PCA for counts data
+dds_obj <- DESeqDataSetFromMatrix(countData = counts,
+                                  colData = condition_list,
+                                  design = ~ group)
+vsd.obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+pcaData <- plotPCA(vsd.obj,  intgroup = c("group"), returnData = T)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+
+
+p <-ggplot(pcaData, aes(PC1, PC2, color=group)) +
+  geom_point(size=3) +
+  labs(x = paste0("PC1: ",percentVar[1],"% variance"),
+       y = paste0("PC2: ",percentVar[2],"% variance"),
+  ) +
+  stat_ellipse(level = 0.95)+
+  theme_bw() +
+  # theme_classic()+
+  theme(text = element_text(family = "Arial", colour = "black")) +
+  # scale_color_manual(values = assigned_colors) +
+  ggrepel::geom_text_repel(aes(label = name), color = "black")
+
+print(p)
+# ggsave("./results/01-Sample_info/01_sample_PCA_plot.pdf", p,width = 8, height = 6, units = "in", dpi = 300)
+# ggsave("./results/01-Sample_info/01_sample_PCA_plot.png", p,width = 8, height = 6, units = "in", dpi = 300)
+#   
+```
+
+
+```{r Sample_PCA_pair, fig.width=8, fig.height=6}
+library(DESeq2)
+library(ggplot2)
+library(ggrepel)
+
+# List of group comparisons
+comparisons <- list(
+  c("22q001-DGCR8-OE", "22q001"),
+  c("22q002-DGCR8-OE", "22q002"),
+  c("22q001-185-OE", "22q001"),
+  c("22q002-185-OE", "22q002"),
+  c("22q002-128-OE", "22q002"),
+  c("004-214-OE", "004"),
+  c("007-214-OE", "007"),
+  c("004-185-KD", "004"),
+  c("007-185-KD", "007"),
+  c("004-128-KD", "004"),
+  c("007-128-KD", "007"),
+  c("22q001-214-KD", "22q001"),
+  c("22q002-214-KD", "22q002")
+)
+
+# Output folder
+output_dir <- "PCA_by_pair"
+dir.create(output_dir, showWarnings = FALSE)
+
+# Loop over each comparison pair
+for (pair in comparisons) {
+  group1 <- pair[1]
+  group2 <- pair[2]
+  
+  pair_name <- paste0(group1, "_vs_", group2)
+  
+  # Subset samples in the pair
+  sample_names <- rownames(condition_list)[condition_list$group %in% c(group1, group2)]
+  
+  # Subset count data and metadata
+  counts_sub <- counts[, sample_names]
+  colData_sub <- condition_list[sample_names, , drop = FALSE]
+  colData_sub$group <- droplevels(factor(colData_sub$group))
+  
+  # Create DESeq2 object and VSD
+  dds <- DESeqDataSetFromMatrix(countData = counts_sub, colData = colData_sub, design = ~group)
+  vsd <- varianceStabilizingTransformation(dds, blind = TRUE)
+  
+  # Run PCA on the VSD object
+  pcaData <- plotPCA(vsd, intgroup = "group", returnData = TRUE)
+  percentVar <- round(100 * attr(pcaData, "percentVar"))
+  pcaData$name <- rownames(pcaData)
+  
+  # Make PCA plot
+  p <- ggplot(pcaData, aes(PC1, PC2, color = group)) +
+    geom_point(size = 3) +
+    labs(
+      title = pair_name,
+      x = paste0("PC1: ", percentVar[1], "% variance"),
+      y = paste0("PC2: ", percentVar[2], "% variance")
+    ) +
+    stat_ellipse(level = 0.95, na.rm = TRUE) +
+    theme_bw() +
+    theme(text = element_text(family = "Arial", color = "black")) +
+    ggrepel::geom_text_repel(aes(label = name), size = 3, max.overlaps = 100)
+  
+  # Save plot
+  ggsave(
+    filename = file.path(output_dir, paste0(pair_name, "_PCA.pdf")),
+    plot = p,
+    width = 7, height = 6
+  )
+  
+  # save to png
+  ggsave(
+    filename = file.path(output_dir, paste0(pair_name, "_PCA.png")),
+    plot = p,
+    width = 7, height = 6
+  )
+}
+
+
+```
+
+
+
+
+
+
+
+## (2) Sample information - Distance heatmap
+
+```{r Sample_dis_Heatmap, fig.width=12, fig.height=10}
+ # Now apply variance stabilizing transformation
+ sampleDists <- dist(t(assay(vsd.obj)))
+ sampleDistMatrix <- as.matrix( sampleDists )
+ rownames(sampleDistMatrix) <- paste( vsd.obj$group )
+ colors <- colorRampPalette( rev(RColorBrewer::brewer.pal(9, "Blues")) )(255)
+ p <- pheatmap::pheatmap(sampleDistMatrix,
+                         clustering_distance_rows = sampleDists,
+                         clustering_distance_cols = sampleDists,
+                         col = colors) 
+print(p)
+
+#  ggsave("./results/01-Sample_info/02_sample_distance_heatmap.pdf", p,width = 8, height = 6, units = "in", dpi = 300)
+# ggsave("./results/01-Sample_info/02_sample_distance_heatmap.png",
+#        p, width = 8, height = 6, units = "in", dpi = 300)
+
+```
+
+\newpage
+
+```{r}
+# Load required libraries
+library(DESeq2)
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+library(tibble)
+library(here)
+library(GSVA)
+library(msigdbr)
+
+# Define group comparisons
+comparisons <- list(
+  c("22q001-185-OE", "22q001"),
+  c("22q002-185-OE", "22q002"),
+  c("22q002-128-OE", "22q002"),
+  c("004-214-OE", "004"),
+  c("007-214-OE", "007"),
+  c("004-185-KD", "004"),
+  c("007-185-KD", "007"),
+  c("004-128-KD", "004"),
+  c("007-128-KD", "007"),
+  c("22q001-214-KD", "22q001"),
+  c("22q002-214-KD", "22q002"),
+  c("22q001-DGCR8-OE", "22q001"),
+  c("22q002-DGCR8-OE", "22q002")
+)
+
+# Paths
+result_root <- "./results/DEG-comparisons"
+dir.create(result_root, showWarnings = FALSE)
+
+# GSVA gene sets
+gmxFile <- here::here("data", "ref", "c5.go.v2023.1.Hs.symbols.gmt")
+gene_sets <- getGmt(gmxFile)
+
+# Loop over comparisons
+for (pair in comparisons) {
+  compare_group <- pair[1]
+  reference_group <- pair[2]
+  pair_name <- paste0(compare_group, "_vs_", reference_group)
+  cat("Processing:", pair_name, "\n")
+
+  # Set thresholds dynamically
+  if (grepl("DGCR8", compare_group, ignore.case = TRUE)) {
+    thresholds <- c(1.5, 2)
+  } else {
+    thresholds <- c(0.5, 1, 1.5)
+  }
+
+  # Set result folder
+  result_folder <- file.path(result_root, pair_name)
+  Result_folder_structure(result_folder)
+
+  # Filter samples and counts
+  filter_sample_info <- condition_list %>% filter(group %in% c(reference_group, compare_group))
+  filter_counts <- counts[, rownames(filter_sample_info)]
+
+  # Run DESeq2
+  dds_obj <- DEAnalysis(
+    counts = filter_counts,
+    reference_group = reference_group,
+    compare_group = compare_group,
+    condition_list = filter_sample_info,
+    target_gene = NULL,
+    result_folder = result_folder
+  )
+
+  # Save all DEGs
+  res <- results(dds_obj)
+  resOrdered <- res[order(res$padj), ]
+  resOrdered <- resOrdered[!is.na(resOrdered$padj), ]
+  dds_obj <- dds_obj[rownames(resOrdered), ]
+  write.csv(resOrdered, file.path(result_folder, "02-DEG", "01_all_gene_results.csv"))
+
+  # Save normalized counts
+  norm_counts <- counts(dds_obj, normalized = TRUE)
+  write.csv(norm_counts, file.path(result_folder, "02-DEG", "DESeq2_normalized_counts.csv"))
+
+  # VSD
+  vsd_obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+
+  # Sample heatmap
+  plot_sample_heatmap(
+    dds_obj,
+    figure_folder = file.path(result_folder, "01-Sample_info"),
+    file_name = "01_sample_distance_heatmap"
+  )
+
+  # PCA
+  plot_sample_PCA_plot(
+    dds_obj,
+    figure_folder = file.path(result_folder, "01-Sample_info"),
+    file_name = "02_sample_PCA_plot",
+    reference_group = reference_group,
+    compare_group = compare_group
+  )
+
+  # Volcano + DEG CSVs + Heatmaps + Enrichment
+  result_df <- resOrdered %>%
+    as.data.frame() %>%
+    rownames_to_column("GeneName") %>%
+    filter(!is.na(padj)) %>%
+    arrange(padj)
+
+  for (fc in thresholds) {
+    # Filter DEGs
+    deg <- result_df %>%
+      filter(abs(log2FoldChange) > fc & padj < 0.05)
+
+    up <- deg %>% filter(log2FoldChange > 0) %>% pull(GeneName)
+    down <- deg %>% filter(log2FoldChange < 0) %>% pull(GeneName)
+
+    # Save DEG table
+    write.csv(deg, file.path(result_folder, "02-DEG", sprintf("DEG_log2fc_%.1f.csv", fc)), row.names = FALSE)
+
+    # Volcano
+    plot_volcano_plot(
+      result_df = result_df,
+      figure_folder = file.path(result_folder, "02-DEG"),
+      file_name = sprintf("volcano_plot_log2fc_%.1f", fc),
+      thread = fc,
+      dot_size = 2
+    )
+
+    # Heatmaps
+    for (scale_type in c("none", "row")) {
+      plot_gene_heatmap(
+        vsd_obj,
+        gene_list = deg$GeneName,
+        figure_folder = file.path(result_folder, "02-DEG"),
+        file_name = sprintf("heatmap_log2fc_%.1f_%s", fc, scale_type),
+        reference_group = reference_group,
+        compare_group = compare_group,
+        cluster_rows = TRUE,
+        cluster_cols = FALSE,
+        scale = scale_type
+      )
+    }
+
+    # Enrichment
+    Enrichment_analysis(
+      gene_list = up,
+      result_folder = file.path(result_folder, "03-Enrichment"),
+      file_name = sprintf("DEG_%.1f_up", fc),
+      gene_name_mapping = gene_name_mapping,
+      flag = "Up"
+    )
+    Enrichment_analysis(
+      gene_list = down,
+      result_folder = file.path(result_folder, "03-Enrichment"),
+      file_name = sprintf("DEG_%.1f_down", fc),
+      gene_name_mapping = gene_name_mapping,
+      flag = "Down"
+    )
+  }
+
+  # GSVA
+  gsva_counts <- assay(vsd_obj)
+  gsvapar <- gsvaParam(as.matrix(gsva_counts), gene_sets, maxDiff = TRUE)
+  gsva_es <- gsva(gsvapar)
+  gsva_matrix <- as.data.frame(gsva_es)
+  write.csv(gsva_matrix, file.path(result_folder, "04-GSVA", "GSVA_matrix.csv"))
+
+  # GSVA mean difference test
+  sample_cmp <- rownames(condition_list)[condition_list$group == compare_group]
+  sample_ref <- rownames(condition_list)[condition_list$group == reference_group]
+  gsva_sub <- gsva_matrix[, c(sample_ref, sample_cmp), drop = FALSE]
+
+  gsva_result <- apply(gsva_sub, 1, function(values) {
+    ref_vals <- values[sample_ref]
+    cmp_vals <- values[sample_cmp]
+    t_res <- try(t.test(cmp_vals, ref_vals), silent = TRUE)
+    if (inherits(t_res, "try-error")) {
+      return(c(ref_mean = NA, cmp_mean = NA, mean_diff = NA, p_value = NA))
+    }
+    ref_mean <- mean(ref_vals)
+    cmp_mean <- mean(cmp_vals)
+    mean_diff <- cmp_mean - ref_mean
+    pval <- t_res$p.value
+    return(c(ref_mean = ref_mean, cmp_mean = cmp_mean, mean_diff = mean_diff, p_value = pval))
+  })
+
+  gsva_result_df <- as.data.frame(t(gsva_result))
+  gsva_result_df$pathway <- rownames(gsva_result_df)
+  gsva_result_df$FDR <- p.adjust(gsva_result_df$p_value, method = "fdr")
+  gsva_result_df <- gsva_result_df %>%
+    arrange(FDR) %>%
+    dplyr::select(pathway, ref_mean, cmp_mean, mean_diff, p_value, FDR)
+
+  write.csv(gsva_result_df, file.path(result_folder, "04-GSVA", "GSVA_comparison_result.csv"), row.names = FALSE)
+
+  cat("Finished:", pair_name, "\n\n")
+}
+
+```
+
+
+
+```{r}
+# Check the DGCR8 gene expression
+
+
+
+
+
+# load the normalized counts
+counts_001 <- read.csv(file.path("results", "DEG-comparisons", "22q001-DGCR8-OE_vs_22q001", "02-DEG", "DESeq2_normalized_counts.csv"), row.names = 1, stringsAsFactors = FALSE)
+colnames(counts_001) <- gsub("\\.", "_", colnames(counts_001))
+colnames(counts_001) <- gsub("^X", "", colnames(counts_001))
+
+# select the DGCR8 gene
+dgcr8_counts_001 <- counts_001[rownames(counts_001) == "DGCR8", ]
+
+
+counts_002 <- read.csv(file.path("results", "DEG-comparisons", "22q002-DGCR8-OE_vs_22q002", "02-DEG", "DESeq2_normalized_counts.csv"), row.names = 1, stringsAsFactors = FALSE)
+colnames(counts_002) <- gsub("\\.", "_", colnames(counts_002))
+colnames(counts_002) <- gsub("^X", "", colnames(counts_002))
+dgcr8_counts_002 <- counts_002[rownames(counts_002) == "DGCR8", ]
+
+# Load required packages
+library(ggplot2)
+library(ggsignif)
+library(dplyr)
+library(extrafont)
+# Convert to long format with batch and condition info
+dgcr8_counts_001_long <- data.frame(
+  sample = colnames(dgcr8_counts_001),
+  expression = as.numeric(dgcr8_counts_001["DGCR8", ]),
+  batch = "22q001"
+)
+
+dgcr8_counts_002_long <- data.frame(
+  sample = colnames(dgcr8_counts_002),
+  expression = as.numeric(dgcr8_counts_002["DGCR8", ]),
+  batch = "22q002"
+)
+
+# Combine and annotate group
+plot_df <- bind_rows(dgcr8_counts_001_long, dgcr8_counts_002_long) %>%
+  mutate(condition = ifelse(grepl("DGCR8_OE", sample), "DGCR8_OE", "Control"),
+         group = ifelse(condition == "Control", batch, paste0(batch, "_DGCR8_OE")))
+
+# Summary for bar height and SE
+summary_df <- plot_df %>%
+  group_by(group) %>%
+  summarise(mean_expr = mean(expression),
+            se = sd(expression) / sqrt(n()))
+
+# Colors
+color_palette <- c("22q001" = "#A6CEE3", 
+                   "22q001_DGCR8_OE" = "#1F78B4", 
+                   "22q002" = "#B2DF8A", 
+                   "22q002_DGCR8_OE" = "#33A02C")
+
+# Valid group comparisons
+valid_groups <- unique(plot_df$group)
+comparisons <- list(
+  c("22q001", "22q001_DGCR8_OE"),
+  c("22q002", "22q002_DGCR8_OE")
+)
+comparisons <- Filter(function(x) all(x %in% valid_groups), comparisons)
+
+# Plot
+p <- ggplot(summary_df, aes(x = group, y = mean_expr, fill = group)) +
+  geom_bar(stat = "identity", color = "black", alpha = 0.9, width = 0.7) +
+  geom_errorbar(aes(ymin = mean_expr - se, ymax = mean_expr + se), 
+                width = 0.2, color = "black") +
+  geom_jitter(data = plot_df, 
+              aes(x = group, y = expression, fill = group), 
+              shape = 21, width = 0.15, size = 3, alpha = 0.9, color = "black") +
+  geom_signif(data = plot_df,
+              aes(x = group, y = expression),
+              comparisons = comparisons,
+              test = "t.test",
+              map_signif_level = TRUE,
+              step_increase = 0.1) +
+  scale_fill_manual(values = color_palette) +
+  theme_classic(base_family = "Arial") +
+  labs(title = "DGCR8 Expression",
+       x = "", 
+       y = "Normalized Expression") +
+  theme(text = element_text(size = 14, family = "Arial"),
+        plot.title = element_text(hjust = 0.5, size = 14),
+        axis.text.x = element_text(size = 16, color = "black"),
+        axis.text.y = element_text(size = 14, color = "black"),
+        axis.title.x = element_text(size = 14, color = "black"),
+        axis.title.y = element_text(size = 14, color = "black"),
+        legend.position = "none")
+
+# Show plot
+print(p)
+
+ggsave( "./results/DEG-comparisons/dgcr8_expression_plot.png", 
+
+       plot = p, 
+       width = 10, 
+       height = 4, 
+       dpi = 300)
+
+ggsave( "./results/DEG-comparisons/dgcr8_expression_plot.pdf", 
+       plot = p, 
+       width = 10, 
+       height = 4)
+
+```
+
+
+
+# Plot the pathway GSVA
+```{r}
+library(ggsignif)
+plot_gsva_boxplot<-  function(gsva_matrix, condition_list_label, pathway_name,
+                              figure_folder, file_name, 
+                              fig.height = 6, fig.width = 4,
+                              save = TRUE,
+                              reference_group, compare_group){
+  
+  # Sample list sub
+  sample_info <- condition_list_label %>%
+    mutate(sample = rownames(.)) %>%
+    filter(group %in% c(reference_group, compare_group))
+  
+  # Convert gsva_matrix to a data frame and reshape
+  plot_df <- as.data.frame(gsva_matrix) %>%
+    rownames_to_column(var = "pathway") %>%
+    filter(pathway == pathway_name) %>%  # Select the specific pathway
+    pivot_longer(cols = -pathway, names_to = "sample", values_to = "GSVA_score") %>%
+    dplyr::select(-pathway)  %>% 
+    filter(sample %in% sample_info$sample)  %>%
+    left_join(sample_info, by = "sample")   %>% 
+    mutate(group = factor(group, levels = c(reference_group, compare_group)))  # Define the factor levels
+  
+  
+  # Ensure colors are mapped to exact group names
+  color_palette <- setNames(c("#10d5da", "#fe867f"), c(reference_group, compare_group))
+  
+  # Process pathway name: remove first part, capitalize first letter, replace underscores with spaces
+  formatted_title <- pathway_name %>%
+    str_remove("^[^_]+_") %>%  # Remove everything before the first underscore
+    str_to_lower() %>%  # Convert everything to lowercase
+    str_replace_all("_", " ") %>%  # Replace underscores with spaces
+    str_to_sentence()  # Capitalize first letter
+  
+  # sub the rna with RNA in formatted_title
+  formatted_title <- str_replace_all(formatted_title, "rna", "RNA")
+  
+  # Create the box plot with scatter overlay
+  p<-ggplot(plot_df, aes(x = group, y = GSVA_score)) +
+    geom_boxplot(aes(fill = group), alpha = 0.9, outlier.shape = NA, color = "black") +  # Box plot with fill color
+    geom_jitter(aes(fill = group), shape = 21, width = 0.2, size = 3, alpha = 0.9, color = "black") +  # Scatter points with fill color
+    # stat_summary(fun = mean, geom = "point", shape = 18, size = 4, color = "black") +  # Mean point
+    geom_signif(comparisons = list(c(reference_group, compare_group)), 
+                test = "t.test", 
+                map_signif_level = TRUE) +  # Add significance annotation
+    scale_fill_manual(values = color_palette) +  # Apply custom colors to boxes & scatter dots
+    theme_classic(base_family = "Arial") +  # Use Arial font for all text
+    labs(
+         x = "",  # Remove x-axis label
+         y = formatted_title) +
+    theme(text = element_text(size = 14, family = "Arial"),  # Ensure all text uses Arial
+          plot.title = element_text(hjust = 0.5, size = 14),  # Center title
+          axis.text.x = element_text(size = 16, color = "black"),  # Increase x-axis text size and set color to black
+          axis.text.y = element_text(size = 14, color = "black"),  # Set y-axis text color to black
+          axis.title.x = element_text(size = 14, color = "black"),  # Set x-axis title color to black
+          axis.title.y = element_text(size = 14, color = "black"),  # Set y-axis title color to black
+      panel.background = element_rect(fill = "transparent", color = NA),  # Transparent panel background
+      plot.background = element_rect(fill = "transparent", color = NA) ,   # Transparent plot background
+          legend.position = "none")  
+  
+  
+  if (!dir.exists(figure_folder)) {
+    dir.create(figure_folder, recursive = TRUE)
+  }
+  
+  # if save is TRUE, save the plot
+  if (save){
+    
+    ggsave(file.path(figure_folder, paste0(file_name, ".png")), p,
+           width = fig.width, height = fig.height, units = "in", dpi = 300)
+    ggsave(file.path(figure_folder, paste0(file_name, ".pdf")), p,
+           width = fig.width, height = fig.height, units = "in")
+  }
+  
+  return(p)
+  
+}
+
+```
+
+
+
+```{r GSVA_pathway_plot, fig.width=10, fig.height=6}
+pathway_list <- read.csv(here::here("data", "ref", "focus-pathway_2024_10_03.csv"))
+
+
+# Define group comparisons
+comparisons <- list(
+  c("22q001-185-OE", "22q001"),
+  c("22q002-185-OE", "22q002"),
+  c("22q002-128-OE", "22q002"),
+  c("004-214-OE", "004"),
+  c("007-214-OE", "007"),
+  c("004-185-KD", "004"),
+  c("007-185-KD", "007"),
+  c("004-128-KD", "004"),
+  c("007-128-KD", "007"),
+  c("22q001-214-KD", "22q001"),
+  c("22q002-214-KD", "22q002"),
+  c("22q001-DGCR8-OE", "22q001"),
+  c("22q002-DGCR8-OE", "22q002")
+)
+
+# Paths
+result_root <- "./results/DEG-comparisons"
+dir.create(result_root, showWarnings = FALSE)
+
+
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                      "sample_info.csv")) %>%
+                    mutate(condition = Diagnosis, 
+                           sample_name = gsub("-", "_", Sample.ID..),
+                           group = Diagnosis)
+
+
+
+
+pair <- comparisons[[1]]
+
+# Loop over comparisons
+for (pair in comparisons) {
+  compare_group <- pair[1]
+  reference_group <- pair[2]
+  pair_name <- paste0(compare_group, "_vs_", reference_group)
+  cat("Processing:", pair_name, "\n")
+  
+  result_folder <- file.path(result_root, pair_name)
+  gsva_matrix<- read.csv(file.path(result_folder, "04-GSVA", "GSVA_matrix.csv"), stringsAsFactors = FALSE, row.names = 1)
+  
+  colnames(gsva_matrix) <- gsub("\\.", "_", colnames(gsva_matrix))
+  colnames(gsva_matrix) <- gsub("^X", "", colnames(gsva_matrix))
+  
+  sample_info <- sample_list_raw %>%
+    filter(group %in% c(reference_group, compare_group)) %>%
+    dplyr::select(sample_name, group) %>%
+    column_to_rownames("sample_name")
+
+
+  
+# plot for the focus pathway
+for (i in 1:length(pathway_list$pathway)) {
+  pathway_name <- pathway_list$pathway[i]
+  print(pathway_name)
+
+  plot_gsva_boxplot(gsva_matrix, 
+                            condition_list_label =sample_info,
+                            pathway_name =  pathway_name,
+                            figure_folder = file.path(result_folder,"04-GSVA","Boxplot"),
+                            file_name = paste0("GSVA_", pathway_name),
+                            fig.height = 6, fig.width = 4,
+                            save=TRUE,
+                            reference_group = reference_group,
+                            compare_group = compare_group)
+  
+  }
+
+  cat("Finished:", pair_name, "\n\n")
+}
+
+
+
+
+
+```
+
+\newpage
+
+# Session information
+```{r}
+sessionInfo()
+```
+

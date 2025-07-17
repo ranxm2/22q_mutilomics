@@ -1,0 +1,479 @@
+---
+title: "Upsetplot of DEG and DEM"
+subtitle: "Consider upregulated gene"
+author: "Ximing Ran"
+date: "2025-04-18"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: false
+  html_document:
+    # code_folding: hide
+    toc: true
+    toc_float: true
+hitheme: tomorrow
+highlighter: highlight.js
+
+---
+
+```{r setup, include=FALSE}
+# load libraries
+library(tidyverse)
+library(knitr)
+set.seed(2024)
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.path = "./results/06-UpsetPlot_v2/Analysis_figure/"
+)
+
+theme_set(theme_bw() + theme(legend.position = "bottom"))
+knitr::kable(head(mtcars[, 1:4]), "simple")
+```
+
+```{r}
+library(tibble)
+library(tidyr)
+library(dplyr)
+library(rtracklayer)
+library(gprofiler2)
+library(eulerr)
+library(extrafont)
+```
+
+
+
+```{r local_function_load}
+# load function from local files
+# source(here::here("source", "DEG_functions.R"))
+
+gene_name_mapping<- readRDS(here::here("data","ref" ,"gene_name_mapping.rds"))
+
+
+clean_miRNA <- function(x) {
+  x <- trimws(x)          # Remove leading/trailing whitespace
+  x <- gsub("\\.", "-", x) # Replace periods with hyphens
+}
+```
+
+\newpage
+
+
+
+# 1. Read the DEG and DEM from the previous analysis
+
+```{r}
+DEG_CTRL <- read.csv(here::here("analysis", "synaptosomes_bulkRNA_analysis", "results", "02-DEG-CTRL", "02-DEG", "01_all_gene_results.csv"), row.names = 1)
+DEG_CTRL <- DEG_CTRL %>% filter(padj < 0.05 & abs(log2FoldChange) > 1)
+DEG_CTRL$sign <- ifelse(DEG_CTRL$log2FoldChange > 0, "up", "down")
+print("DEG label CTRL")
+print(table(DEG_CTRL$sign))
+
+DEG_22q <- read.csv(here::here("analysis", "synaptosomes_bulkRNA_analysis", "results", "02-DEG-22q", "02-DEG", "01_all_gene_results.csv"), row.names = 1)
+DEG_22q <- DEG_22q %>% filter(padj < 0.05 & abs(log2FoldChange) > 1)
+DEG_22q$sign <- ifelse(DEG_22q$log2FoldChange > 0, "up", "down")
+print("DEG label 22q")
+print(table(DEG_22q$sign))
+
+```
+
+
+```{r}
+DEM_Veh <- read.csv(here::here("analysis", "synaptosomes_miRNA_anlaysis", "results", "01-DEM-Vehicle", "02-DEM", "01_all_gene_results.csv"), row.names = 1)
+DEM_Veh <- DEM_Veh %>% filter(padj < 0.05 & abs(log2FoldChange) > 1)
+rownames(DEM_Veh) <- clean_miRNA(rownames(DEM_Veh))
+DEM_Veh$miRNA <- rownames(DEM_Veh)
+DEM_Veh$miRNA_log2FC <- DEM_Veh$log2FoldChange
+DEM_Veh$sign <- ifelse(DEM_Veh$log2FoldChange > 0, "up", "down")
+print("DEM_Veh label")
+print(table(DEM_Veh$sign))
+
+
+DEM_TTX <- read.csv(here::here("analysis", "synaptosomes_miRNA_anlaysis", "results", "01-DEM-TTX", "02-DEM", "01_all_gene_results.csv"), row.names = 1)
+DEM_TTX <- DEM_TTX %>% filter(padj < 0.05 & abs(log2FoldChange) > 1)
+rownames(DEM_TTX) <- clean_miRNA(rownames(DEM_TTX))
+DEM_TTX$miRNA <- rownames(DEM_TTX)
+DEM_TTX$miRNA_log2FC <- DEM_TTX$log2FoldChange
+DEM_TTX$sign <- ifelse(DEM_TTX$log2FoldChange > 0, "up", "down")
+print("DEM_TTX label")
+print(table(DEM_TTX$sign))
+```
+
+
+\newpage
+# 2. Predicted target miRNA of DEG
+
+## (a) Vene Plot 
+
+
+```{r Vene_plot_data, fig.width=10, fig.height=10}
+# Set the path to the downloaded file
+file_path <- here::here("data", "ref", "ENCORI_hg38_CLIP-seq_all_miRNA.txt")
+
+# Load the data, skipping the initial lines to start from the correct header row
+ref_ENCORI <- read.table(file_path, header = TRUE, sep = "\t", stringsAsFactors = FALSE, skip = 3, fill = TRUE)
+
+colnames(ref_ENCORI)[2] <- "miRNA"
+
+ref_ENCORI$miRNA <- clean_miRNA(ref_ENCORI$miRNA)
+colnames(ref_ENCORI)[4] <- "mRNA"
+
+
+# check the overlap of the DEG in DEG_CTRL and DEG_22q
+DEG_CTRL_list_up <- rownames(DEG_CTRL %>% filter(log2FoldChange > 0))
+DEG_22q_list_up <- rownames(DEG_22q %>% filter(log2FoldChange > 0))
+DEG_overlap_up <- intersect(DEG_CTRL_list_up, DEG_22q_list_up)
+DEG_CTRL_list_up_unique <- setdiff(DEG_CTRL_list_up, DEG_overlap_up)
+
+DEG_CTRL_list_down <- rownames(DEG_CTRL %>% filter(log2FoldChange < 0))
+DEG_22q_list_down <- rownames(DEG_22q %>% filter(log2FoldChange < 0))
+DEG_overlap_down <- intersect(DEG_CTRL_list_down, DEG_22q_list_down)
+DEG_CTRL_list_down_unique <- setdiff(DEG_CTRL_list_down, DEG_overlap_down)
+
+# check the overlap of the DEM in DEM_CTRL and DEM_22q
+DEM_down_DEG_up <- ref_ENCORI %>% filter(mRNA %in% DEG_CTRL_list_up_unique) %>% pull(miRNA)%>% unique() 
+print(sprintf("DEM target CTRL up, DEG %d , DEG target DEM %d ", length(DEG_CTRL_list_up_unique), length(DEM_down_DEG_up)))
+# write.csv(DEM_down_DEG_up, file = "result/TTX-miRNA-plot/DEM_down_DEG_up.csv", row.names = FALSE)
+
+DEM_down_DEG_up_pair <- ref_ENCORI %>% filter(mRNA %in% DEG_CTRL_list_up_unique) 
+# write.csv(DEM_down_DEG_up_pair, file = "result/TTX-miRNA-plot/DEM_down_DEG_up_pair.csv", row.names = FALSE)
+
+DEM_up_DEG_down <- ref_ENCORI %>% filter(mRNA %in% DEG_CTRL_list_down_unique) %>% pull(miRNA)%>% unique() 
+print(sprintf("DEM target CTRL down, DEG %d , DEG target DEM %d ", length(DEG_CTRL_list_down_unique), length(DEM_up_DEG_down)))
+# write.csv(DEM_up_DEG_down, file = "result/TTX-miRNA-plot/DEM_up_DEG_down.csv", row.names = FALSE)
+
+DEM_up_DEG_down_pair <- ref_ENCORI %>% filter(mRNA %in% DEG_CTRL_list_down_unique)
+# write.csv(DEM_up_DEG_down_pair, file = "result/TTX-miRNA-plot/DEM_up_DEG_down_pair.csv", row.names = FALSE)
+
+```
+
+
+
+### Plot for downregulated miRNA
+
+```{r Vene_plot_up, fig.width=10, fig.height=10}
+# plot the venn plot of the miRNA and 
+# for down miRNA
+# list 1 : DEM_donw_DEG_up
+
+# list 2 : DEM_Veh_down
+DEM_Veh_down <- DEM_Veh %>% filter(sign == "down") %>% select(miRNA) %>% pull()
+DEM_TTX_down <- DEM_TTX %>% filter(sign == "down") %>% select(miRNA) %>% pull()
+
+
+# Define your input lists
+x <- list(
+  DEM_down_DEG_up  = DEM_down_DEG_up ,
+  Vehicle_DEM_down = DEM_Veh_down,
+  TTX_DEM_down = DEM_TTX_down
+)
+
+# Calculate unique and intersection counts for the three sets
+miRNA_count <- length(unique(x$DEM_down_DEG_up ))
+Vehicle_count <- length(unique(x$Vehicle_DEM_down))
+TTX_count <- length(unique(x$TTX_DEM_down))
+
+miRNA_Vehicle_intersection <- length(intersect(x$DEM_down_DEG_up , x$Vehicle_DEM_down))
+miRNA_TTX_intersection <- length(intersect(x$DEM_down_DEG_up , x$TTX_DEM_down))
+Vehicle_TTX_intersection <- length(intersect(x$Vehicle_DEM_down, x$TTX_DEM_down))
+all_three_intersection <- length(Reduce(intersect, x))
+
+# Print the all 3 intersection
+print("miRNA in overlap of all three")
+print(Reduce(intersect, x))
+
+# Define counts for the Euler diagram
+venn_counts <- c(
+  "DEM_down_DEG_up" = miRNA_count - miRNA_Vehicle_intersection - miRNA_TTX_intersection + all_three_intersection,
+  "Vehicle_DEM_down" = Vehicle_count - miRNA_Vehicle_intersection - Vehicle_TTX_intersection + all_three_intersection,
+  "TTX_DEM_down" = TTX_count - miRNA_TTX_intersection - Vehicle_TTX_intersection + all_three_intersection,
+  "DEM_down_DEG_up&Vehicle_DEM_down" = miRNA_Vehicle_intersection - all_three_intersection,
+  "DEM_down_DEG_up&TTX_DEM_down" = miRNA_TTX_intersection - all_three_intersection,
+  "Vehicle_DEM_down&TTX_DEM_down" = Vehicle_TTX_intersection - all_three_intersection,
+  "DEM_down_DEG_up&Vehicle_DEM_down&TTX_DEM_down" = all_three_intersection
+)
+
+# Create the Euler diagram
+VennDiag <- euler(venn_counts)
+
+# Set the output path for the PDF
+output_dir <- file.path("results", "06-UpsetPlot_v2")
+
+# Save the diagram as a PDF
+output_path <- file.path(output_dir,  "DEM_down_TTX.pdf")
+pdf(output_path, width = 10, height = 10, bg = "transparent")
+plot(VennDiag, 
+     quantities = TRUE, 
+     fills = c("yellow", "skyblue", "pink"), 
+     edges = FALSE, 
+     main = "Down regulated miRNA ", 
+     labels = list(fontfamily = "Arial"), 
+     main.fontfamily = "Arial")
+dev.off()
+
+
+
+output_path <- file.path(output_dir,  "DEM_down_TTX.png")
+png(output_path, width = 10, height = 10,units = "in", res = 300, bg = "transparent")
+plot(VennDiag, 
+     quantities = TRUE, 
+     fills = c("yellow", "skyblue", "pink"), 
+     edges = FALSE, 
+     main = "Down regulated miRNA ", 
+     labels = list(fontfamily = "Arial"), 
+     main.fontfamily = "Arial")
+dev.off()
+
+plot(VennDiag, 
+     quantities = TRUE, 
+     fills = c("yellow", "skyblue", "pink"), 
+     edges = FALSE, 
+     main = "Down regulated miRNA ", 
+     labels = list(fontfamily = "Arial"), 
+     main.fontfamily = "Arial")
+
+```
+
+
+\newpage
+
+
+### Plot for upregulated miRNA
+
+```{r Vene_plot_down, fig.width=10, fig.height=10}
+DEM_Veh_up <- DEM_Veh %>% filter(sign == "up") %>% select(miRNA) %>% pull()
+DEM_TTX_up <- DEM_TTX %>% filter(sign == "up") %>% select(miRNA) %>% pull()
+
+# plot the venn plot of the three
+x<- list(
+  DEM_up_DEG_down = DEM_up_DEG_down,
+  Vehicle_DEM_up = DEM_Veh_up,
+  TTX_DEM_up = DEM_TTX_up
+)
+
+miRNA_count <- length(unique(x$DEM_up_DEG_down))
+Vehicle_count <- length(unique(x$Vehicle_DEM_up))
+TTX_count <- length(unique(x$TTX_DEM_up))
+
+miRNA_Vehicle_intersection <- length(intersect(x$DEM_up_DEG_down, x$Vehicle_DEM_up))
+miRNA_TTX_intersection <- length(intersect(x$DEM_up_DEG_down, x$TTX_DEM_up))
+Vehicle_TTX_intersection <- length(intersect(x$Vehicle_DEM_up, x$TTX_DEM_up))
+
+all_three_intersection <- length(Reduce(intersect, x))
+
+# Print the all 3 intersection
+print("miRNA in overlap of all three")
+print(Reduce(intersect, x))
+
+# Define counts for the Euler diagram
+venn_counts <- c(
+  "DEM_up_DEG_down" = miRNA_count - miRNA_Vehicle_intersection - miRNA_TTX_intersection + all_three_intersection,
+  "Vehicle_DEM_up" = Vehicle_count - miRNA_Vehicle_intersection - Vehicle_TTX_intersection + all_three_intersection,
+  "TTX_DEM_up" = TTX_count - miRNA_TTX_intersection - Vehicle_TTX_intersection + all_three_intersection,
+  "DEM_up_DEG_down&Vehicle_DEM_up" = miRNA_Vehicle_intersection - all_three_intersection,
+  "DEM_up_DEG_down&TTX_DEM_up" = miRNA_TTX_intersection - all_three_intersection,
+  "Vehicle_DEM_up&TTX_DEM_up" = Vehicle_TTX_intersection - all_three_intersection,
+  "DEM_up_DEG_down&Vehicle_DEM_up&TTX_DEM_up" = all_three_intersection
+)
+
+# Create the Euler diagram
+VennDiag <- euler(venn_counts)
+
+# Set the output path for the PDF
+output_dir <- file.path("results", "06-UpsetPlot_v2")
+output_path <- file.path(output_dir,  "DEM_up_TTX.pdf")
+
+# Save the diagram as a PDF
+pdf(output_path, width = 10, height = 10, bg = "transparent")
+plot(VennDiag, 
+     quantities = TRUE, 
+     fills = c("yellow", "skyblue", "pink"), 
+     edges = FALSE, 
+     main = "Up regulated miRNA", 
+     labels = list(fontfamily = "Arial"), 
+     main.fontfamily = "Arial")
+dev.off()
+
+output_path <- file.path(output_dir,  "DEM_up_TTX.png")
+png(output_path, width = 10, height = 10,units = "in", res = 300, bg = "transparent")
+plot(VennDiag, 
+     quantities = TRUE, 
+     fills = c("yellow", "skyblue", "pink"), 
+     edges = FALSE, 
+     main = "Up regulated miRNA ", 
+     labels = list(fontfamily = "Arial"), 
+     main.fontfamily = "Arial")
+dev.off()
+
+plot(VennDiag, 
+     quantities = TRUE, 
+     fills = c("yellow", "skyblue", "pink"), 
+     edges = FALSE, 
+     main = "Up regulated miRNA ", 
+     labels = list(fontfamily = "Arial"), 
+     main.fontfamily = "Arial")
+
+```
+
+\newpage
+## (b) Upset plot
+
+### Downregulated miRNA
+
+```{r Upset_plot_Down, fig.width=10, fig.height=5}
+# list 2 : DEM_Veh_down
+DEM_Veh_down <- DEM_Veh %>% filter(sign == "down") %>% select(miRNA) %>% pull()
+DEM_TTX_down <- DEM_TTX %>% filter(sign == "down") %>% select(miRNA) %>% pull()
+
+# Define your input lists
+x <- list(
+  DEG_up_predicted_DEM_down  = DEM_down_DEG_up ,
+  Vehicle_DEM_down = DEM_Veh_down,
+  TTX_DEM_down = DEM_TTX_down
+)
+
+# Load necessary packages
+library(UpSetR)
+
+
+# Convert list to a data format suitable for UpSetR
+input_matrix <- fromList(x)
+
+# Plot the UpSet plot
+p<-UpSetR::upset(
+  input_matrix,
+  sets            = c("DEG_up_predicted_DEM_down",
+                      "Vehicle_DEM_down",
+                      "TTX_DEM_down"),
+  sets.bar.color  = "black",
+  order.by        = "freq",
+  keep.order      = TRUE,
+  main.bar.color  = "#5773CC",
+  point.size      = 4,
+  line.size       = 1,
+  matrix.color    = "#5773CC",
+  mainbar.y.label = "Intersection Size",
+  sets.x.label    = "Set Size",
+  text.scale      = c(
+    1.5,    # intersection title
+    1.5,    # intersection tick labels
+    1.5,    # set‐size title
+    1.5,    # set‐size tick labels
+    1.5,    # set names
+    1.5     # numbers above bars (now twice as big)
+  ),
+  queries = list(
+    list(
+      query  = intersects,
+      params = list("DEG_up_predicted_DEM_down",
+                    "Vehicle_DEM_down",
+                    "TTX_DEM_down"),
+      color  = "#FFB900",
+      active = TRUE
+    )
+  )
+)
+
+print(p)
+
+# Save the plot as a PDF
+output_dir <- file.path("results", "06-UpsetPlot_v2")
+
+output_path <- file.path(output_dir, "DEM_down_TTX_upset.pdf")
+
+pdf(output_path, width = 8, height = 4, bg = "transparent")
+print(p)
+dev.off()
+
+png_path <- file.path(output_dir, "DEM_down_TTX_upset.png")
+png(png_path, width = 8, height = 4, units = "in", res = 300, bg = "transparent")
+print(p)
+dev.off()
+
+```
+\newpage
+### Upregulated miRNA
+
+```{r Upset_plot_Up, fig.width=10, fig.height=5}
+
+DEM_Veh_up <- DEM_Veh %>% filter(sign == "up") %>% select(miRNA) %>% pull()
+DEM_TTX_up <- DEM_TTX %>% filter(sign == "up") %>% select(miRNA) %>% pull()
+
+# plot the venn plot of the three
+x<- list(
+  DEG_down_predicted_DEM_up = DEM_up_DEG_down,
+  Vehicle_DEM_up = DEM_Veh_up,
+  TTX_DEM_up = DEM_TTX_up
+)
+
+
+
+
+# Convert list to a data format suitable for UpSetR
+input_matrix <- fromList(x)
+
+# Plot the UpSet plot
+p<- # Plot the UpSet plot
+p<-UpSetR::upset(
+  input_matrix,
+  sets            = c("DEG_down_predicted_DEM_up",
+                      "Vehicle_DEM_up",
+                      "TTX_DEM_up"),
+  sets.bar.color  = "black",
+  order.by        = "freq",
+  keep.order      = TRUE,
+  main.bar.color  = "#5773CC",
+  point.size      = 4,
+  line.size       = 1,
+  matrix.color    = "#5773CC",
+  mainbar.y.label = "Intersection Size",
+  sets.x.label    = "Set Size",
+  text.scale      = c(
+    1.5,    # intersection title
+    1.5,    # intersection tick labels
+    1.5,    # set‐size title
+    1.5,    # set‐size tick labels
+    1.5,    # set names
+    1.5     # numbers above bars (now twice as big)
+  ),
+  queries = list(
+    list(
+      query  = intersects,
+      params = list("DEG_down_predicted_DEM_up",
+                    "Vehicle_DEM_up",
+                    "TTX_DEM_up"),
+      color  = "#FFB900",
+      active = TRUE
+    )
+  )
+)
+
+print(p)
+
+# Save the plot as a PDF
+output_dir <- file.path("results", "06-UpsetPlot_v2")
+
+output_path <- file.path(output_dir, "DEM_up_TTX_upset.pdf")
+
+pdf(output_path, width = 8, height = 4, bg = "transparent")
+print(p)
+dev.off()
+
+png_path <- file.path(output_dir, "DEM_up_TTX_upset.png")
+png(png_path, width = 8, height = 4, units = "in", res = 300, bg = "transparent")
+print(p)
+
+
+```
+
+
+
+\newpage
+# Session information
+```{r}
+sessionInfo()
+```
+

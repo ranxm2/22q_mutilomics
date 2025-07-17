@@ -1,0 +1,4115 @@
+---
+title: "Analysis mutil Group"
+author: "Ximing Ran"
+date: "2025-07-02"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: false
+  html_document:
+    # code_folding: hide
+    toc: true
+    toc_float: true
+hitheme: tomorrow
+highlighter: highlight.js
+
+---
+
+```{r setup, include=FALSE}
+# load libraries
+library(tidyverse)
+library(knitr)
+set.seed(2024)
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.path = "./rescue_target_gene_module/Analysis_figures/"
+)
+
+theme_set(theme_bw() + theme(legend.position = "bottom"))
+knitr::kable(head(mtcars[, 1:4]), "simple")
+```
+
+```{r}
+library(tibble)
+library(tidyr)
+library(dplyr)
+library(rtracklayer)
+
+library(dplyr)
+library(pheatmap)
+library(RColorBrewer)
+```
+
+
+
+```{r local_function_load}
+# load function from local files
+source(here::here("source", "DEG_functions.R"))
+```
+
+\newpage
+
+# 1. Read the count data
+In this section, we will read the clean count data from the synaptosomes_bulkRNA folder.  We will read the data and merge them into a single table. 
+
+```{r load_bulkRNA_data}
+input_count <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                      "bulkRNA_counts_cleaned.csv"))
+counts <-  as.data.frame(input_count) %>% 
+  column_to_rownames(var = "gene")
+colnames(counts) <- gsub("-", "_", colnames(counts))
+# replacte the first X in the colnames
+colnames(counts) <- gsub("^X", "", colnames(counts))
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                      "sample_info.csv")) %>%
+                    mutate(condition = Diagnosis) 
+
+sample_list_raw$Sample.name <- gsub("-", "_", sample_list_raw$Sample.name)
+# Ensure the column names of counts exist in Sample.name
+new_colnames <- sample_list_raw$Sample.ID..[match(colnames(counts), sample_list_raw$Sample.name )]
+
+# Assign new column names
+colnames(counts) <- new_colnames
+
+
+# sort the columns by the colname
+condition_list <- data.frame(
+  group =sample_list_raw$condition
+)
+
+row.names(condition_list) <- sample_list_raw$Sample.ID..
+
+counts<- counts[, rownames(condition_list)]
+
+gene_name_mapping<- readRDS(here::here("data","ref" ,"gene_name_mapping.rds"))
+
+
+```
+
+
+
+```{r DESeq2_analysis}
+# Init the result folder structure for the result
+result_folder_all = './results'
+result_folder = result_folder_all
+
+```
+
+
+\newpage
+
+# 2. Visualization for reuslt
+
+## (1) Sample information - PCA plot
+
+```{r Sample_PCA, fig.width=8, fig.height=6}
+figure_folder = result_folder
+# do PCA for counts data
+dds_obj <- DESeqDataSetFromMatrix(countData = counts,
+                                  colData = condition_list,
+                                  design = ~ group)
+vsd.obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+pcaData <- plotPCA(vsd.obj,  intgroup = c("group"), returnData = T)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+
+
+p <-ggplot(pcaData, aes(PC1, PC2, color=group)) +
+  geom_point(size=3) +
+  labs(x = paste0("PC1: ",percentVar[1],"% variance"),
+       y = paste0("PC2: ",percentVar[2],"% variance"),
+  ) +
+  stat_ellipse(level = 0.95)+
+  theme_bw() +
+  # theme_classic()+
+  theme(text = element_text(family = "Arial", colour = "black")) +
+  # scale_color_manual(values = assigned_colors) +
+  ggrepel::geom_text_repel(aes(label = name), color = "black")
+
+print(p)
+# ggsave("./results/01-Sample_info/01_sample_PCA_plot.pdf", p,width = 8, height = 6, units = "in", dpi = 300)
+# ggsave("./results/01-Sample_info/01_sample_PCA_plot.png", p,width = 8, height = 6, units = "in", dpi = 300)
+#   
+```
+
+
+
+
+
+
+## (2) Sample information - Distance heatmap
+
+```{r Sample_dis_Heatmap, fig.width=12, fig.height=10}
+ # Now apply variance stabilizing transformation
+ sampleDists <- dist(t(assay(vsd.obj)))
+ sampleDistMatrix <- as.matrix( sampleDists )
+ rownames(sampleDistMatrix) <- paste( vsd.obj$group )
+ colors <- colorRampPalette( rev(RColorBrewer::brewer.pal(9, "Blues")) )(255)
+ p <- pheatmap::pheatmap(sampleDistMatrix,
+                         clustering_distance_rows = sampleDists,
+                         clustering_distance_cols = sampleDists,
+                         col = colors) 
+print(p)
+
+#  ggsave("./results/01-Sample_info/02_sample_distance_heatmap.pdf", p,width = 8, height = 6, units = "in", dpi = 300)
+# ggsave("./results/01-Sample_info/02_sample_distance_heatmap.png",
+#        p, width = 8, height = 6, units = "in", dpi = 300)
+
+```
+
+
+```{r}
+library(pheatmap)
+# Define group comparisons
+comparisons <- list(
+  c("22q001-185-OE", "22q001"),
+  c("22q002-185-OE", "22q002"),
+  c("22q002-128-OE", "22q002"),
+  c("004-214-OE", "004"),
+  c("007-214-OE", "007"),
+  c("004-185-KD", "004"),
+  c("007-185-KD", "007"),
+  c("004-128-KD", "004"),
+  c("007-128-KD", "007"),
+  c("22q001-214-KD", "22q001"),
+  c("22q002-214-KD", "22q002"),
+  c("22q001-DGCR8-OE", "22q001"),
+  c("22q002-DGCR8-OE", "22q002")
+)  
+
+padj_to_stars <- function(p) {
+    if (is.na(p)) return("") # handle NA
+    if (p < 0.001) return(" (***)")
+    else if (p < 0.01) return(" (**)")
+    else if (p < 0.05) return(" (*)")
+    else return("")
+  }
+```
+\newpage
+
+# miRNA 214
+## Sample 004
+```{r miRNA_plot_214_sample_004, fig.width=8, fig.height=16}
+target_gene_214 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                      "hsa-miR-214-3p_up_enrichment_GO_BP.csv"), stringsAsFactors = FALSE, row.names = 1)
+# rename the gene to gene_module, the intersection_gene is the gene name
+target_gene_214 <- target_gene_214 %>%
+  rename(gene_module = gene,
+         gene = intersection_gene)
+
+gene_list <- unique(target_gene_214$gene) 
+
+comparisons_214 <- list(
+  c("004-214-OE", "004"),
+  c("007-214-OE", "007"),
+  c("22q001-214-KD", "22q001"),
+  c("22q002-214-KD", "22q002")
+)
+
+# Paths
+result_root <- "./results/DEG-comparisons"
+dir.create(result_root, showWarnings = FALSE)
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                      "sample_info.csv")) %>%
+                    mutate(condition = Diagnosis, 
+                           sample_name = gsub("-", "_", Sample.ID..),
+                           group = Diagnosis)
+
+
+pair <- comparisons_214 [[1]]
+
+
+
+  compare_group <- pair[1]
+  reference_group <- pair[2]
+  pair_name <- paste0(compare_group, "_vs_", reference_group)
+
+  
+  result_folder <- file.path(result_root, pair_name)
+  
+  
+
+
+  # Set thresholds dynamically
+  if (grepl("DGCR8", compare_group, ignore.case = TRUE)) {
+    thresholds <- c(1.5, 2)
+  } else {
+    thresholds <- c(0.5, 1, 1.5)
+  }
+
+  # Set result folder
+  result_folder <- file.path(result_root, pair_name)
+  Result_folder_structure(result_folder)
+
+  # Filter samples and counts
+  filter_sample_info <- condition_list %>% filter(group %in% c(reference_group, compare_group))
+  filter_counts <- counts[, rownames(filter_sample_info)]
+  
+  dds_obj <- DEAnalysis(
+    counts = filter_counts,
+    reference_group = reference_group,
+    compare_group = compare_group,
+    condition_list = filter_sample_info,
+    target_gene = NULL,
+    result_folder = result_folder
+  )
+  
+  vsd_obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+
+# make the color scale
+brewer_palette <- "RdBu"
+ramp <- colorRampPalette( RColorBrewer::brewer.pal(11, brewer_palette))
+mr <- ramp(256)[256:1]
+
+# color map
+unique_groups <- c(reference_group, compare_group)
+color_palette <- c("#10d5da","#fe867f")  # Extend this list if you have more groups
+assigned_colors <- setNames(color_palette[seq_along(unique_groups)], unique_groups)
+annotation_colors_row <- list(group = assigned_colors)
+annotation_col <- as.data.frame(colData(vsd_obj)[, "group", drop = FALSE])
+
+stabilized_counts <- assay(vsd_obj)
+row_variances <- rowVars(stabilized_counts)
+stabilized_counts <- stabilized_counts - rowMeans(stabilized_counts, na.rm=T)
+stabilized_counts <- stabilized_counts[gene_list, rownames(annotation_col)]
+
+
+# turn the row name to gene 
+stabilized_counts_df <- as.data.frame(stabilized_counts) %>%
+  rownames_to_column(var = "gene")
+
+
+target_gene_214_sample <- left_join(
+  target_gene_214,
+  stabilized_counts_df,
+  by ="gene")
+
+# replace the Neuro witg neuro in target_gene_214_sample$term_name
+target_gene_214_sample$term_name <- gsub(
+  "Neuro", "neuro",
+  target_gene_214_sample$term_name
+)
+
+
+ref_samples <- annotation_col %>% 
+              rownames_to_column(var = "sample") %>% 
+              filter(group == reference_group)  %>% pull(sample)
+  
+comp_samples <- annotation_col %>% 
+              rownames_to_column(var = "sample") %>% 
+              filter(group == compare_group)  %>% pull(sample)
+
+
+target_gene_214_sample$ref_mean <- rowMeans(
+  target_gene_214_sample %>%
+    dplyr::select(all_of(ref_samples)),
+)
+target_gene_214_sample$comp_mean <- rowMeans(
+  target_gene_214_sample %>%
+    dplyr::select(all_of(comp_samples)),
+)
+
+# If the  compare_group contain the "OE" in the name, then only keep the rows with  compare_group sample mean less then   reference_group mean
+if (grepl("OE", compare_group)) {
+  target_gene_214_sample <- target_gene_214_sample %>%
+    filter(
+      ref_mean > comp_mean,
+    )
+} else {
+  target_gene_214_sample <- target_gene_214_sample %>%
+    filter(
+      ref_mean < comp_mean,
+    )
+}
+
+
+# filterout the gene iwth GRIA# and PLEKHG4
+target_gene_214_sample <- target_gene_214_sample %>%
+  filter(
+    !grepl("GRIA", gene_module),
+    !grepl("PLEKHG4", gene_module)
+  )
+
+library(dplyr)
+library(pheatmap)
+library(RColorBrewer)
+
+# 1. Define which columns are your “expression” columns:
+#    (adjust these names if yours differ slightly)
+count_cols <- rownames(annotation_col)
+# 2. Extract a numeric matrix of counts, with genes as rownames
+mat <- target_gene_214_sample %>%
+  dplyr::select(all_of(count_cols)) %>%
+  as.matrix()
+rownames(mat) <- target_gene_214_sample$gene_module
+
+# 3. Build the row‑annotation data frame:
+annotation_row <- data.frame(
+  Module = target_gene_214_sample$term_name
+)
+rownames(annotation_row) <- target_gene_214_sample$gene_module
+
+# 4. Choose a palette for your modules:
+modules <- unique(annotation_row$Module)
+module_colors <- setNames(
+  brewer.pal(min(length(modules), 12), "Set3"),
+  modules
+)
+annotation_colors <- list(
+  Module = module_colors,
+  group = assigned_colors
+)
+
+
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = FALSE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+  ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap.pdf")),
+         p, width = 8, height = 10, units = "in", dpi = 300)
+  ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap.png")),
+         p, width = 8, height = 10, units = "in", dpi = 300)
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = TRUE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap_cluster.pdf")),
+       p, width = 8, height = 12, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap_cluster.png")),
+       p, width = 8, height = 12, units = "in", dpi = 300)
+
+
+
+
+
+
+
+
+
+```
+
+## Sample 007
+```{r miRNA_plot_214_sample_007, fig.width=8, fig.height=16}
+target_gene_214 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                      "hsa-miR-214-3p_up_enrichment_GO_BP.csv"), stringsAsFactors = FALSE, row.names = 1)
+# rename the gene to gene_module, the intersection_gene is the gene name
+target_gene_214 <- target_gene_214 %>%
+  rename(gene_module = gene,
+         gene = intersection_gene)
+
+gene_list <- unique(target_gene_214$gene) 
+
+comparisons_214 <- list(
+  c("004-214-OE", "004"),
+  c("007-214-OE", "007"),
+  c("22q001-214-KD", "22q001"),
+  c("22q002-214-KD", "22q002")
+)
+
+# Paths
+result_root <- "./results/DEG-comparisons"
+dir.create(result_root, showWarnings = FALSE)
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                      "sample_info.csv")) %>%
+                    mutate(condition = Diagnosis, 
+                           sample_name = gsub("-", "_", Sample.ID..),
+                           group = Diagnosis)
+
+
+pair <- comparisons_214 [[2]]
+
+
+
+  compare_group <- pair[1]
+  reference_group <- pair[2]
+  pair_name <- paste0(compare_group, "_vs_", reference_group)
+
+  
+  result_folder <- file.path(result_root, pair_name)
+  
+
+  # Set thresholds dynamically
+  if (grepl("DGCR8", compare_group, ignore.case = TRUE)) {
+    thresholds <- c(1.5, 2)
+  } else {
+    thresholds <- c(0.5, 1, 1.5)
+  }
+
+  # Set result folder
+  result_folder <- file.path(result_root, pair_name)
+  Result_folder_structure(result_folder)
+
+  # Filter samples and counts
+  filter_sample_info <- condition_list %>% filter(group %in% c(reference_group, compare_group))
+  filter_counts <- counts[, rownames(filter_sample_info)]
+  
+  dds_obj <- DEAnalysis(
+    counts = filter_counts,
+    reference_group = reference_group,
+    compare_group = compare_group,
+    condition_list = filter_sample_info,
+    target_gene = NULL,
+    result_folder = result_folder
+  )
+  
+  vsd_obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+
+# make the color scale
+brewer_palette <- "RdBu"
+ramp <- colorRampPalette( RColorBrewer::brewer.pal(11, brewer_palette))
+mr <- ramp(256)[256:1]
+
+# color map
+unique_groups <- c(reference_group, compare_group)
+color_palette <- c("#10d5da","#fe867f")  # Extend this list if you have more groups
+assigned_colors <- setNames(color_palette[seq_along(unique_groups)], unique_groups)
+annotation_colors_row <- list(group = assigned_colors)
+annotation_col <- as.data.frame(colData(vsd_obj)[, "group", drop = FALSE])
+
+stabilized_counts <- assay(vsd_obj)
+row_variances <- rowVars(stabilized_counts)
+stabilized_counts <- stabilized_counts - rowMeans(stabilized_counts, na.rm=T)
+stabilized_counts <- stabilized_counts[gene_list, rownames(annotation_col)]
+
+
+# turn the row name to gene 
+stabilized_counts_df <- as.data.frame(stabilized_counts) %>%
+  rownames_to_column(var = "gene")
+
+
+target_gene_214_sample <- left_join(
+  target_gene_214,
+  stabilized_counts_df,
+  by ="gene")
+
+# replace the Neuro witg neuro in target_gene_214_sample$term_name
+target_gene_214_sample$term_name <- gsub(
+  "Neuro", "neuro",
+  target_gene_214_sample$term_name
+)
+
+
+ref_samples <- annotation_col %>% 
+              rownames_to_column(var = "sample") %>% 
+              filter(group == reference_group)  %>% pull(sample)
+  
+comp_samples <- annotation_col %>% 
+              rownames_to_column(var = "sample") %>% 
+              filter(group == compare_group)  %>% pull(sample)
+
+
+target_gene_214_sample$ref_mean <- rowMeans(
+  target_gene_214_sample %>%
+    dplyr::select(all_of(ref_samples)),
+)
+target_gene_214_sample$comp_mean <- rowMeans(
+  target_gene_214_sample %>%
+    dplyr::select(all_of(comp_samples)),
+)
+
+# If the  compare_group contain the "OE" in the name, then only keep the rows with  compare_group sample mean less then   reference_group mean
+if (grepl("OE", compare_group)) {
+  target_gene_214_sample <- target_gene_214_sample %>%
+    filter(
+      ref_mean > comp_mean,
+    )
+} else {
+  target_gene_214_sample <- target_gene_214_sample %>%
+    filter(
+      ref_mean < comp_mean,
+    )
+}
+
+
+
+# 1. Define which columns are your “expression” columns:
+#    (adjust these names if yours differ slightly)
+count_cols <- rownames(annotation_col)
+# 2. Extract a numeric matrix of counts, with genes as rownames
+mat <- target_gene_214_sample %>%
+  dplyr::select(all_of(count_cols)) %>%
+  as.matrix()
+rownames(mat) <- target_gene_214_sample$gene_module
+
+# 3. Build the row‑annotation data frame:
+annotation_row <- data.frame(
+  Module = target_gene_214_sample$term_name
+)
+rownames(annotation_row) <- target_gene_214_sample$gene_module
+
+# 4. Choose a palette for your modules:
+modules <- unique(annotation_row$Module)
+module_colors <- setNames(
+  brewer.pal(min(length(modules), 12), "Set3"),
+  modules
+)
+annotation_colors <- list(
+  Module = module_colors,
+  group = assigned_colors
+)
+
+
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = FALSE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+  ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap.pdf")),
+         p, width = 8, height = 10, units = "in", dpi = 300)
+  ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap.png")),
+         p, width = 8, height = 10, units = "in", dpi = 300)
+
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = TRUE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap_cluster.pdf")),
+       p, width = 8, height = 12, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap_cluster.png")),
+       p, width = 8, height = 12, units = "in", dpi = 300)
+
+
+
+
+
+
+
+```
+
+## Sample 001
+```{r miRNA_plot_214_sample_001, fig.width=8, fig.height=16}
+target_gene_214 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                      "hsa-miR-214-3p_up_enrichment_GO_BP.csv"), stringsAsFactors = FALSE, row.names = 1)
+# rename the gene to gene_module, the intersection_gene is the gene name
+target_gene_214 <- target_gene_214 %>%
+  rename(gene_module = gene,
+         gene = intersection_gene)
+
+gene_list <- unique(target_gene_214$gene) 
+
+comparisons_214 <- list(
+  c("004-214-OE", "004"),
+  c("007-214-OE", "007"),
+  c("22q001-214-KD", "22q001"),
+  c("22q002-214-KD", "22q002")
+)
+
+# Paths
+result_root <- "./results/DEG-comparisons"
+dir.create(result_root, showWarnings = FALSE)
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                      "sample_info.csv")) %>%
+                    mutate(condition = Diagnosis, 
+                           sample_name = gsub("-", "_", Sample.ID..),
+                           group = Diagnosis)
+
+
+pair <- comparisons_214 [[3]]
+
+
+
+  compare_group <- pair[1]
+  reference_group <- pair[2]
+  pair_name <- paste0(compare_group, "_vs_", reference_group)
+
+  
+  result_folder <- file.path(result_root, pair_name)
+  
+  
+
+
+  # Set thresholds dynamically
+  if (grepl("DGCR8", compare_group, ignore.case = TRUE)) {
+    thresholds <- c(1.5, 2)
+  } else {
+    thresholds <- c(0.5, 1, 1.5)
+  }
+
+  # Set result folder
+  result_folder <- file.path(result_root, pair_name)
+  Result_folder_structure(result_folder)
+
+  # Filter samples and counts
+  filter_sample_info <- condition_list %>% filter(group %in% c(reference_group, compare_group))
+  filter_counts <- counts[, rownames(filter_sample_info)]
+  
+  dds_obj <- DEAnalysis(
+    counts = filter_counts,
+    reference_group = reference_group,
+    compare_group = compare_group,
+    condition_list = filter_sample_info,
+    target_gene = NULL,
+    result_folder = result_folder
+  )
+  
+  vsd_obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+
+# make the color scale
+brewer_palette <- "RdBu"
+ramp <- colorRampPalette( RColorBrewer::brewer.pal(11, brewer_palette))
+mr <- ramp(256)[256:1]
+
+# color map
+unique_groups <- c(reference_group, compare_group)
+color_palette <- c("#10d5da","#fe867f")  # Extend this list if you have more groups
+assigned_colors <- setNames(color_palette[seq_along(unique_groups)], unique_groups)
+annotation_colors_row <- list(group = assigned_colors)
+annotation_col <- as.data.frame(colData(vsd_obj)[, "group", drop = FALSE])
+
+stabilized_counts <- assay(vsd_obj)
+row_variances <- rowVars(stabilized_counts)
+stabilized_counts <- stabilized_counts - rowMeans(stabilized_counts, na.rm=T)
+stabilized_counts <- stabilized_counts[gene_list, rownames(annotation_col)]
+
+
+# turn the row name to gene 
+stabilized_counts_df <- as.data.frame(stabilized_counts) %>%
+  rownames_to_column(var = "gene")
+
+
+target_gene_214_sample <- left_join(
+  target_gene_214,
+  stabilized_counts_df,
+  by ="gene")
+
+# replace the Neuro witg neuro in target_gene_214_sample$term_name
+target_gene_214_sample$term_name <- gsub(
+  "Neuro", "neuro",
+  target_gene_214_sample$term_name
+)
+
+
+ref_samples <- annotation_col %>% 
+              rownames_to_column(var = "sample") %>% 
+              filter(group == reference_group)  %>% pull(sample)
+  
+comp_samples <- annotation_col %>% 
+              rownames_to_column(var = "sample") %>% 
+              filter(group == compare_group)  %>% pull(sample)
+
+
+target_gene_214_sample$ref_mean <- rowMeans(
+  target_gene_214_sample %>%
+    dplyr::select(all_of(ref_samples)),
+)
+target_gene_214_sample$comp_mean <- rowMeans(
+  target_gene_214_sample %>%
+    dplyr::select(all_of(comp_samples)),
+)
+
+# If the  compare_group contain the "OE" in the name, then only keep the rows with  compare_group sample mean less then   reference_group mean
+if (grepl("OE", compare_group)) {
+  target_gene_214_sample <- target_gene_214_sample %>%
+    filter(
+      ref_mean > comp_mean,
+    )
+} else {
+  target_gene_214_sample <- target_gene_214_sample %>%
+    filter(
+      ref_mean < comp_mean,
+    )
+}
+
+
+
+# 1. Define which columns are your “expression” columns:
+#    (adjust these names if yours differ slightly)
+count_cols <- rownames(annotation_col)
+# 2. Extract a numeric matrix of counts, with genes as rownames
+mat <- target_gene_214_sample %>%
+  dplyr::select(all_of(count_cols)) %>%
+  as.matrix()
+rownames(mat) <- target_gene_214_sample$gene_module
+
+# 3. Build the row‑annotation data frame:
+annotation_row <- data.frame(
+  Module = target_gene_214_sample$term_name
+)
+rownames(annotation_row) <- target_gene_214_sample$gene_module
+
+# 4. Choose a palette for your modules:
+modules <- unique(annotation_row$Module)
+module_colors <- setNames(
+  brewer.pal(min(length(modules), 12), "Set3"),
+  modules
+)
+annotation_colors <- list(
+  Module = module_colors,
+  group = assigned_colors
+)
+
+
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = FALSE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+  ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap.pdf")),
+         p, width = 8, height = 6, units = "in", dpi = 300)
+  ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap.png")),
+         p, width = 8, height = 6, units = "in", dpi = 300)
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = TRUE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap_cluster.pdf")),
+       p, width = 8, height = 12, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap_cluster.png")),
+       p, width = 8, height = 12, units = "in", dpi = 300)
+
+
+
+
+
+
+
+
+
+```
+
+## Sample 002
+```{r miRNA_plot_214_sample_002, fig.width=8, fig.height=16}
+target_gene_214 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                      "hsa-miR-214-3p_up_enrichment_GO_BP.csv"), stringsAsFactors = FALSE, row.names = 1)
+# rename the gene to gene_module, the intersection_gene is the gene name
+target_gene_214 <- target_gene_214 %>%
+  rename(gene_module = gene,
+         gene = intersection_gene)
+
+gene_list <- unique(target_gene_214$gene) 
+
+comparisons_214 <- list(
+  c("004-214-OE", "004"),
+  c("007-214-OE", "007"),
+  c("22q001-214-KD", "22q001"),
+  c("22q002-214-KD", "22q002")
+)
+
+# Paths
+result_root <- "./results/DEG-comparisons"
+dir.create(result_root, showWarnings = FALSE)
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                      "sample_info.csv")) %>%
+                    mutate(condition = Diagnosis, 
+                           sample_name = gsub("-", "_", Sample.ID..),
+                           group = Diagnosis)
+
+
+pair <- comparisons_214 [[4]]
+
+
+
+  compare_group <- pair[1]
+  reference_group <- pair[2]
+  pair_name <- paste0(compare_group, "_vs_", reference_group)
+
+  
+  result_folder <- file.path(result_root, pair_name)
+  
+
+  # Set thresholds dynamically
+  if (grepl("DGCR8", compare_group, ignore.case = TRUE)) {
+    thresholds <- c(1.5, 2)
+  } else {
+    thresholds <- c(0.5, 1, 1.5)
+  }
+
+  # Set result folder
+  result_folder <- file.path(result_root, pair_name)
+  Result_folder_structure(result_folder)
+
+  # Filter samples and counts
+  filter_sample_info <- condition_list %>% filter(group %in% c(reference_group, compare_group))
+  filter_counts <- counts[, rownames(filter_sample_info)]
+  
+  dds_obj <- DEAnalysis(
+    counts = filter_counts,
+    reference_group = reference_group,
+    compare_group = compare_group,
+    condition_list = filter_sample_info,
+    target_gene = NULL,
+    result_folder = result_folder
+  )
+  
+  vsd_obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+
+# make the color scale
+brewer_palette <- "RdBu"
+ramp <- colorRampPalette( RColorBrewer::brewer.pal(11, brewer_palette))
+mr <- ramp(256)[256:1]
+
+# color map
+unique_groups <- c(reference_group, compare_group)
+color_palette <- c("#10d5da","#fe867f")  # Extend this list if you have more groups
+assigned_colors <- setNames(color_palette[seq_along(unique_groups)], unique_groups)
+annotation_colors_row <- list(group = assigned_colors)
+annotation_col <- as.data.frame(colData(vsd_obj)[, "group", drop = FALSE])
+
+stabilized_counts <- assay(vsd_obj)
+row_variances <- rowVars(stabilized_counts)
+stabilized_counts <- stabilized_counts - rowMeans(stabilized_counts, na.rm=T)
+stabilized_counts <- stabilized_counts[gene_list, rownames(annotation_col)]
+
+
+# turn the row name to gene 
+stabilized_counts_df <- as.data.frame(stabilized_counts) %>%
+  rownames_to_column(var = "gene")
+
+
+target_gene_214_sample <- left_join(
+  target_gene_214,
+  stabilized_counts_df,
+  by ="gene")
+
+# replace the Neuro witg neuro in target_gene_214_sample$term_name
+target_gene_214_sample$term_name <- gsub(
+  "Neuro", "neuro",
+  target_gene_214_sample$term_name
+)
+
+
+ref_samples <- annotation_col %>% 
+              rownames_to_column(var = "sample") %>% 
+              filter(group == reference_group)  %>% pull(sample)
+  
+comp_samples <- annotation_col %>% 
+              rownames_to_column(var = "sample") %>% 
+              filter(group == compare_group)  %>% pull(sample)
+
+
+target_gene_214_sample$ref_mean <- rowMeans(
+  target_gene_214_sample %>%
+    dplyr::select(all_of(ref_samples)),
+)
+target_gene_214_sample$comp_mean <- rowMeans(
+  target_gene_214_sample %>%
+    dplyr::select(all_of(comp_samples)),
+)
+
+# If the  compare_group contain the "OE" in the name, then only keep the rows with  compare_group sample mean less then   reference_group mean
+if (grepl("OE", compare_group)) {
+  target_gene_214_sample <- target_gene_214_sample %>%
+    filter(
+      ref_mean > comp_mean,
+    )
+} else {
+  target_gene_214_sample <- target_gene_214_sample %>%
+    filter(
+      ref_mean < comp_mean,
+    )
+}
+
+# filterout the gene iwth GRIA# and PLEKHG4
+target_gene_214_sample <- target_gene_214_sample %>%
+  filter(
+    !grepl("PLPPR4", gene_module)
+  )
+
+
+# 1. Define which columns are your “expression” columns:
+#    (adjust these names if yours differ slightly)
+count_cols <- rownames(annotation_col)
+# 2. Extract a numeric matrix of counts, with genes as rownames
+mat <- target_gene_214_sample %>%
+  dplyr::select(all_of(count_cols)) %>%
+  as.matrix()
+rownames(mat) <- target_gene_214_sample$gene_module
+
+# 3. Build the row‑annotation data frame:
+annotation_row <- data.frame(
+  Module = target_gene_214_sample$term_name
+)
+rownames(annotation_row) <- target_gene_214_sample$gene_module
+
+# 4. Choose a palette for your modules:
+modules <- unique(annotation_row$Module)
+module_colors <- setNames(
+  brewer.pal(min(length(modules), 12), "Set3"),
+  modules
+)
+annotation_colors <- list(
+  Module = module_colors,
+  group = assigned_colors
+)
+
+
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = FALSE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+  ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap.pdf")),
+         p, width = 8, height = 6, units = "in", dpi = 300)
+  ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap.png")),
+         p, width = 8, height = 6, units = "in", dpi = 300)
+
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = TRUE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap_cluster.pdf")),
+       p, width = 8, height = 12, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap_cluster.png")),
+       p, width = 8, height = 12, units = "in", dpi = 300)
+
+
+
+
+
+
+
+
+```
+
+
+\newpage
+
+# miRNA 128
+## Sample 002
+
+```{r miRNA_plot_128_002, fig.width=8, fig.height=16}
+
+target_gene_128 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                       "hsa-miR-128-3p_down_enrichment_GO_BP.csv"), stringsAsFactors = FALSE)
+# rename the gene to gene_module, the intersection_gene is the gene name
+target_gene_128 <- target_gene_128 %>%
+  rename(gene_module = gene,
+         gene = intersection_gene)
+
+gene_list <- unique(target_gene_128$gene) 
+
+comparisons_128 <- list(
+  c("22q002-128-OE", "22q002"),
+  c("004-128-KD", "004"),
+  c("007-128-KD", "007")
+)  
+# Paths
+result_root <- "./results/DEG-comparisons"
+dir.create(result_root, showWarnings = FALSE)
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                       "sample_info.csv")) %>%
+  mutate(condition = Diagnosis, 
+         sample_name = gsub("-", "_", Sample.ID..),
+         group = Diagnosis)
+
+
+pair <- comparisons_128 [[1]]
+
+
+
+compare_group <- pair[1]
+reference_group <- pair[2]
+pair_name <- paste0(compare_group, "_vs_", reference_group)
+
+
+result_folder <- file.path(result_root, pair_name)
+
+
+
+# Set thresholds dynamically
+if (grepl("DGCR8", compare_group, ignore.case = TRUE)) {
+  thresholds <- c(1.5, 2)
+} else {
+  thresholds <- c(0.5, 1, 1.5)
+}
+
+# Set result folder
+result_folder <- file.path(result_root, pair_name)
+Result_folder_structure(result_folder)
+
+# Filter samples and counts
+filter_sample_info <- condition_list %>% filter(group %in% c(reference_group, compare_group))
+filter_counts <- counts[, rownames(filter_sample_info)]
+
+dds_obj <- DEAnalysis(
+  counts = filter_counts,
+  reference_group = reference_group,
+  compare_group = compare_group,
+  condition_list = filter_sample_info,
+  target_gene = NULL,
+  result_folder = result_folder
+)
+
+vsd_obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+
+# make the color scale
+brewer_palette <- "RdBu"
+ramp <- colorRampPalette( RColorBrewer::brewer.pal(11, brewer_palette))
+mr <- ramp(256)[256:1]
+
+# color map
+unique_groups <- c(reference_group, compare_group)
+color_palette <- c("#10d5da","#fe867f")  # Extend this list if you have more groups
+assigned_colors <- setNames(color_palette[seq_along(unique_groups)], unique_groups)
+annotation_colors_row <- list(group = assigned_colors)
+annotation_col <- as.data.frame(colData(vsd_obj)[, "group", drop = FALSE])
+
+stabilized_counts <- assay(vsd_obj)
+row_variances <- rowVars(stabilized_counts)
+stabilized_counts <- stabilized_counts - rowMeans(stabilized_counts, na.rm=T)
+stabilized_counts <- stabilized_counts[gene_list, rownames(annotation_col)]
+
+
+# turn the row name to gene 
+stabilized_counts_df <- as.data.frame(stabilized_counts) %>%
+  rownames_to_column(var = "gene")
+
+
+target_gene_128_sample <- left_join(
+  target_gene_128,
+  stabilized_counts_df,
+  by ="gene")
+
+# replace the Neuro witg neuro in target_gene_128_sample$term_name
+target_gene_128_sample$term_name <- gsub(
+  "Neuro", "neuro",
+  target_gene_128_sample$term_name
+)
+
+
+ref_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == reference_group)  %>% pull(sample)
+
+comp_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == compare_group)  %>% pull(sample)
+
+
+target_gene_128_sample$ref_mean <- rowMeans(
+  target_gene_128_sample %>%
+    dplyr::select(all_of(ref_samples)),
+)
+target_gene_128_sample$comp_mean <- rowMeans(
+  target_gene_128_sample %>%
+    dplyr::select(all_of(comp_samples)),
+)
+
+# If the  compare_group contain the "OE" in the name, then only keep the rows with  compare_group sample mean less then   reference_group mean
+if (grepl("OE", compare_group)) {
+  target_gene_128_sample <- target_gene_128_sample %>%
+    filter(
+      ref_mean > comp_mean,
+    )
+} else {
+  target_gene_128_sample <- target_gene_128_sample %>%
+    filter(
+      ref_mean < comp_mean,
+    )
+}
+
+
+# # filterout the gene iwth GRIA# and PLEKHG4
+target_gene_128_sample <- target_gene_128_sample %>%
+  filter(
+    !grepl("FOXC1", gene_module)
+  )
+
+
+# 1. Define which columns are your “expression” columns:
+#    (adjust these names if yours differ slightly)
+count_cols <- rownames(annotation_col)
+# 2. Extract a numeric matrix of counts, with genes as rownames
+mat <- target_gene_128_sample %>%
+  dplyr::select(all_of(count_cols)) %>%
+  as.matrix()
+rownames(mat) <- target_gene_128_sample$gene_module
+
+# 3. Build the row‑annotation data frame:
+annotation_row <- data.frame(
+  Module = target_gene_128_sample$term_name
+)
+rownames(annotation_row) <- target_gene_128_sample$gene_module
+
+# 4. Choose a palette for your modules:
+modules <- unique(annotation_row$Module)
+module_colors <- setNames(
+  brewer.pal(min(length(modules), 12), "Set3"),
+  modules
+)
+annotation_colors <- list(
+  Module = module_colors,
+  group = assigned_colors
+)
+
+
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = FALSE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap.pdf")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap.png")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = TRUE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap_cluster.pdf")),
+       p, width = 8, height = 12, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap_cluster.png")),
+       p, width = 8, height = 12, units = "in", dpi = 300)
+
+
+
+
+
+
+```
+
+## Sample 004
+```{r miRNA_plot_128_004, fig.width=8, fig.height=16}
+
+target_gene_128 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                       "hsa-miR-128-3p_down_enrichment_GO_BP.csv"), stringsAsFactors = FALSE)
+# rename the gene to gene_module, the intersection_gene is the gene name
+target_gene_128 <- target_gene_128 %>%
+  rename(gene_module = gene,
+         gene = intersection_gene)
+
+gene_list <- unique(target_gene_128$gene) 
+
+comparisons_128 <- list(
+  c("22q002-128-OE", "22q002"),
+  c("004-128-KD", "004"),
+  c("007-128-KD", "007")
+)  
+# Paths
+result_root <- "./results/DEG-comparisons"
+dir.create(result_root, showWarnings = FALSE)
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                       "sample_info.csv")) %>%
+  mutate(condition = Diagnosis, 
+         sample_name = gsub("-", "_", Sample.ID..),
+         group = Diagnosis)
+
+
+pair <- comparisons_128 [[2]]
+
+
+
+compare_group <- pair[1]
+reference_group <- pair[2]
+pair_name <- paste0(compare_group, "_vs_", reference_group)
+
+
+result_folder <- file.path(result_root, pair_name)
+
+
+compare_group <- pair[1]
+reference_group <- pair[2]
+pair_name <- paste0(compare_group, "_vs_", reference_group)
+
+# Set thresholds dynamically
+if (grepl("DGCR8", compare_group, ignore.case = TRUE)) {
+  thresholds <- c(1.5, 2)
+} else {
+  thresholds <- c(0.5, 1, 1.5)
+}
+
+# Set result folder
+result_folder <- file.path(result_root, pair_name)
+Result_folder_structure(result_folder)
+
+# Filter samples and counts
+filter_sample_info <- condition_list %>% filter(group %in% c(reference_group, compare_group))
+filter_counts <- counts[, rownames(filter_sample_info)]
+
+dds_obj <- DEAnalysis(
+  counts = filter_counts,
+  reference_group = reference_group,
+  compare_group = compare_group,
+  condition_list = filter_sample_info,
+  target_gene = NULL,
+  result_folder = result_folder
+)
+
+vsd_obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+
+# make the color scale
+brewer_palette <- "RdBu"
+ramp <- colorRampPalette( RColorBrewer::brewer.pal(11, brewer_palette))
+mr <- ramp(256)[256:1]
+
+# color map
+unique_groups <- c(reference_group, compare_group)
+color_palette <- c("#10d5da","#fe867f")  # Extend this list if you have more groups
+assigned_colors <- setNames(color_palette[seq_along(unique_groups)], unique_groups)
+annotation_colors_row <- list(group = assigned_colors)
+annotation_col <- as.data.frame(colData(vsd_obj)[, "group", drop = FALSE])
+
+stabilized_counts <- assay(vsd_obj)
+row_variances <- rowVars(stabilized_counts)
+stabilized_counts <- stabilized_counts - rowMeans(stabilized_counts, na.rm=T)
+overlap_gene_list <- intersect(gene_list, rownames(stabilized_counts))
+stabilized_counts <- stabilized_counts[overlap_gene_list, rownames(annotation_col)]
+
+
+# turn the row name to gene 
+stabilized_counts_df <- as.data.frame(stabilized_counts) %>%
+  rownames_to_column(var = "gene")
+
+
+target_gene_128_sample <- left_join(
+  target_gene_128,
+  stabilized_counts_df,
+  by ="gene")
+
+# replace the Neuro witg neuro in target_gene_128_sample$term_name
+target_gene_128_sample$term_name <- gsub(
+  "Neuro", "neuro",
+  target_gene_128_sample$term_name
+)
+
+
+ref_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == reference_group)  %>% pull(sample)
+
+comp_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == compare_group)  %>% pull(sample)
+
+
+target_gene_128_sample$ref_mean <- rowMeans(
+  target_gene_128_sample %>%
+    dplyr::select(all_of(ref_samples)),
+)
+target_gene_128_sample$comp_mean <- rowMeans(
+  target_gene_128_sample %>%
+    dplyr::select(all_of(comp_samples)),
+)
+
+# If the  compare_group contain the "OE" in the name, then only keep the rows with  compare_group sample mean less then   reference_group mean
+if (grepl("OE", compare_group)) {
+  target_gene_128_sample <- target_gene_128_sample %>%
+    filter(
+      ref_mean > comp_mean,
+    )
+} else {
+  target_gene_128_sample <- target_gene_128_sample %>%
+    filter(
+      ref_mean < comp_mean,
+    )
+}
+
+
+# # filterout the gene iwth GRIA# and PLEKHG4
+target_gene_128_sample <- target_gene_128_sample %>%
+  filter(
+    !grepl("TEAD4", gene_module)
+  )
+
+
+# 1. Define which columns are your “expression” columns:
+#    (adjust these names if yours differ slightly)
+count_cols <- rownames(annotation_col)
+# 2. Extract a numeric matrix of counts, with genes as rownames
+mat <- target_gene_128_sample %>%
+  dplyr::select(all_of(count_cols)) %>%
+  as.matrix()
+rownames(mat) <- target_gene_128_sample$gene_module
+
+# 3. Build the row‑annotation data frame:
+annotation_row <- data.frame(
+  Module = target_gene_128_sample$term_name
+)
+rownames(annotation_row) <- target_gene_128_sample$gene_module
+
+# 4. Choose a palette for your modules:
+modules <- unique(annotation_row$Module)
+module_colors <- setNames(
+  brewer.pal(min(length(modules), 12), "Set3"),
+  modules
+)
+annotation_colors <- list(
+  Module = module_colors,
+  group = assigned_colors
+)
+
+
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = FALSE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap.pdf")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap.png")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = TRUE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap_cluster.pdf")),
+       p, width = 8, height = 12, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap_cluster.png")),
+       p, width = 8, height = 12, units = "in", dpi = 300)
+
+
+
+
+```
+
+
+## Sample 007
+```{r miRNA_plot_128_007, fig.width=8, fig.height=16}
+
+target_gene_128 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                       "hsa-miR-128-3p_down_enrichment_GO_BP.csv"), stringsAsFactors = FALSE)
+# rename the gene to gene_module, the intersection_gene is the gene name
+target_gene_128 <- target_gene_128 %>%
+  rename(gene_module = gene,
+         gene = intersection_gene)
+
+gene_list <- unique(target_gene_128$gene) 
+
+comparisons_128 <- list(
+  c("22q002-128-OE", "22q002"),
+  c("004-128-KD", "004"),
+  c("007-128-KD", "007")
+)  
+# Paths
+result_root <- "./results/DEG-comparisons"
+dir.create(result_root, showWarnings = FALSE)
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                       "sample_info.csv")) %>%
+  mutate(condition = Diagnosis, 
+         sample_name = gsub("-", "_", Sample.ID..),
+         group = Diagnosis)
+
+
+pair <- comparisons_128 [[3]]
+
+
+
+compare_group <- pair[1]
+reference_group <- pair[2]
+pair_name <- paste0(compare_group, "_vs_", reference_group)
+
+result_folder <- file.path(result_root, pair_name)
+
+
+compare_group <- pair[1]
+reference_group <- pair[2]
+pair_name <- paste0(compare_group, "_vs_", reference_group)
+
+
+# Set thresholds dynamically
+if (grepl("DGCR8", compare_group, ignore.case = TRUE)) {
+  thresholds <- c(1.5, 2)
+} else {
+  thresholds <- c(0.5, 1, 1.5)
+}
+
+# Set result folder
+result_folder <- file.path(result_root, pair_name)
+Result_folder_structure(result_folder)
+
+# Filter samples and counts
+filter_sample_info <- condition_list %>% filter(group %in% c(reference_group, compare_group))
+filter_counts <- counts[, rownames(filter_sample_info)]
+
+dds_obj <- DEAnalysis(
+  counts = filter_counts,
+  reference_group = reference_group,
+  compare_group = compare_group,
+  condition_list = filter_sample_info,
+  target_gene = NULL,
+  result_folder = result_folder
+)
+
+vsd_obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+
+# make the color scale
+brewer_palette <- "RdBu"
+ramp <- colorRampPalette( RColorBrewer::brewer.pal(11, brewer_palette))
+mr <- ramp(256)[256:1]
+
+# color map
+unique_groups <- c(reference_group, compare_group)
+color_palette <- c("#10d5da","#fe867f")  # Extend this list if you have more groups
+assigned_colors <- setNames(color_palette[seq_along(unique_groups)], unique_groups)
+annotation_colors_row <- list(group = assigned_colors)
+annotation_col <- as.data.frame(colData(vsd_obj)[, "group", drop = FALSE])
+
+stabilized_counts <- assay(vsd_obj)
+row_variances <- rowVars(stabilized_counts)
+stabilized_counts <- stabilized_counts - rowMeans(stabilized_counts, na.rm=T)
+overlap_gene_list <- intersect(gene_list, rownames(stabilized_counts))
+stabilized_counts <- stabilized_counts[overlap_gene_list, rownames(annotation_col)]
+
+
+# turn the row name to gene 
+stabilized_counts_df <- as.data.frame(stabilized_counts) %>%
+  rownames_to_column(var = "gene")
+
+
+target_gene_128_sample <- left_join(
+  target_gene_128,
+  stabilized_counts_df,
+  by ="gene")
+
+# replace the Neuro witg neuro in target_gene_128_sample$term_name
+target_gene_128_sample$term_name <- gsub(
+  "Neuro", "neuro",
+  target_gene_128_sample$term_name
+)
+
+
+ref_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == reference_group)  %>% pull(sample)
+
+comp_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == compare_group)  %>% pull(sample)
+
+
+target_gene_128_sample$ref_mean <- rowMeans(
+  target_gene_128_sample %>%
+    dplyr::select(all_of(ref_samples)),
+)
+target_gene_128_sample$comp_mean <- rowMeans(
+  target_gene_128_sample %>%
+    dplyr::select(all_of(comp_samples)),
+)
+
+# If the  compare_group contain the "OE" in the name, then only keep the rows with  compare_group sample mean less then   reference_group mean
+if (grepl("OE", compare_group)) {
+  target_gene_128_sample <- target_gene_128_sample %>%
+    filter(
+      ref_mean > comp_mean,
+    )
+} else {
+  target_gene_128_sample <- target_gene_128_sample %>%
+    filter(
+      ref_mean < comp_mean,
+    )
+}
+
+
+# # filterout the gene iwth GRIA# and PLEKHG4
+target_gene_128_sample <- target_gene_128_sample %>%
+  filter(
+    !grepl("EPAS1", gene_module),
+    
+    !grepl("RUNX1", gene_module)
+  )
+
+
+# 1. Define which columns are your “expression” columns:
+#    (adjust these names if yours differ slightly)
+count_cols <- rownames(annotation_col)
+# 2. Extract a numeric matrix of counts, with genes as rownames
+mat <- target_gene_128_sample %>%
+  dplyr::select(all_of(count_cols)) %>%
+  as.matrix()
+rownames(mat) <- target_gene_128_sample$gene_module
+
+# 3. Build the row‑annotation data frame:
+annotation_row <- data.frame(
+  Module = target_gene_128_sample$term_name
+)
+rownames(annotation_row) <- target_gene_128_sample$gene_module
+
+# 4. Choose a palette for your modules:
+modules <- unique(annotation_row$Module)
+module_colors <- setNames(
+  brewer.pal(min(length(modules), 12), "Set3"),
+  modules
+)
+annotation_colors <- list(
+  Module = module_colors,
+  group = assigned_colors
+)
+
+
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = FALSE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap.pdf")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap.png")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = TRUE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap_cluster.pdf")),
+       p, width = 8, height = 12, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap_cluster.png")),
+       p, width = 8, height = 12, units = "in", dpi = 300)
+
+
+
+
+
+
+
+```
+
+\newpage
+
+# miRNA 185
+## Sample 001
+
+```{r miRNA_plot_185_001, fig.width=8, fig.height=16}
+target_gene_185 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                       "hsa-miR-185-5p_down_enrichment_GO_BP.csv"), stringsAsFactors = FALSE)
+
+# rename the gene to gene_module, the intersection_gene is the gene name
+target_gene_185 <- target_gene_185 %>%
+  rename(gene_module = gene,
+         gene = intersection_gene)
+
+gene_list <- unique(target_gene_185$gene) 
+
+comparisons_185 <- list(
+  c("22q001-185-OE", "22q001"),
+  c("22q002-185-OE", "22q002"),
+  c("004-185-KD", "004"),
+  c("007-185-KD", "007")
+)  
+# Paths
+result_root <- "./results/DEG-comparisons"
+dir.create(result_root, showWarnings = FALSE)
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                       "sample_info.csv")) %>%
+  mutate(condition = Diagnosis, 
+         sample_name = gsub("-", "_", Sample.ID..),
+         group = Diagnosis)
+
+
+pair <- comparisons_185 [[1]]
+
+
+
+compare_group <- pair[1]
+reference_group <- pair[2]
+pair_name <- paste0(compare_group, "_vs_", reference_group)
+
+
+result_folder <- file.path(result_root, pair_name)
+
+
+compare_group <- pair[1]
+reference_group <- pair[2]
+pair_name <- paste0(compare_group, "_vs_", reference_group)
+
+
+# Set thresholds dynamically
+if (grepl("DGCR8", compare_group, ignore.case = TRUE)) {
+  thresholds <- c(1.5, 2)
+} else {
+  thresholds <- c(0.5, 1, 1.5)
+}
+
+# Set result folder
+result_folder <- file.path(result_root, pair_name)
+Result_folder_structure(result_folder)
+
+# Filter samples and counts
+filter_sample_info <- condition_list %>% filter(group %in% c(reference_group, compare_group))
+filter_counts <- counts[, rownames(filter_sample_info)]
+
+dds_obj <- DEAnalysis(
+  counts = filter_counts,
+  reference_group = reference_group,
+  compare_group = compare_group,
+  condition_list = filter_sample_info,
+  target_gene = NULL,
+  result_folder = result_folder
+)
+
+vsd_obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+
+# make the color scale
+brewer_palette <- "RdBu"
+ramp <- colorRampPalette( RColorBrewer::brewer.pal(11, brewer_palette))
+mr <- ramp(256)[256:1]
+
+# color map
+unique_groups <- c(reference_group, compare_group)
+color_palette <- c("#10d5da","#fe867f")  # Extend this list if you have more groups
+assigned_colors <- setNames(color_palette[seq_along(unique_groups)], unique_groups)
+annotation_colors_row <- list(group = assigned_colors)
+annotation_col <- as.data.frame(colData(vsd_obj)[, "group", drop = FALSE])
+
+stabilized_counts <- assay(vsd_obj)
+row_variances <- rowVars(stabilized_counts)
+stabilized_counts <- stabilized_counts - rowMeans(stabilized_counts, na.rm=T)
+overlap_gene_list <- intersect(gene_list, rownames(stabilized_counts))
+stabilized_counts <- stabilized_counts[overlap_gene_list, rownames(annotation_col)]
+
+
+# turn the row name to gene 
+stabilized_counts_df <- as.data.frame(stabilized_counts) %>%
+  rownames_to_column(var = "gene")
+
+
+target_gene_185_sample <- left_join(
+  target_gene_185,
+  stabilized_counts_df,
+  by ="gene")
+
+# replace the Neuro witg neuro in target_gene_185_sample$term_name
+target_gene_185_sample$term_name <- gsub(
+  "Neuro", "neuro",
+  target_gene_185_sample$term_name
+)
+
+
+ref_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == reference_group)  %>% pull(sample)
+
+comp_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == compare_group)  %>% pull(sample)
+
+
+target_gene_185_sample$ref_mean <- rowMeans(
+  target_gene_185_sample %>%
+    dplyr::select(all_of(ref_samples)),
+)
+target_gene_185_sample$comp_mean <- rowMeans(
+  target_gene_185_sample %>%
+    dplyr::select(all_of(comp_samples)),
+)
+
+# If the  compare_group contain the "OE" in the name, then only keep the rows with  compare_group sample mean less then   reference_group mean
+if (grepl("OE", compare_group)) {
+  target_gene_185_sample <- target_gene_185_sample %>%
+    filter(
+      ref_mean > comp_mean,
+    )
+} else {
+  target_gene_185_sample <- target_gene_185_sample %>%
+    filter(
+      ref_mean < comp_mean,
+    )
+}
+
+
+# # filterout the gene iwth GRIA# and PLEKHG4
+# target_gene_185_sample <- target_gene_185_sample %>%
+#   filter(
+#     !grepl("EPAS1", gene_module),
+#     
+#     !grepl("RUNX1", gene_module)
+#   )
+
+
+# 1. Define which columns are your “expression” columns:
+#    (adjust these names if yours differ slightly)
+count_cols <- rownames(annotation_col)
+# 2. Extract a numeric matrix of counts, with genes as rownames
+mat <- target_gene_185_sample %>%
+  dplyr::select(all_of(count_cols)) %>%
+  as.matrix()
+rownames(mat) <- target_gene_185_sample$gene_module
+
+# 3. Build the row‑annotation data frame:
+annotation_row <- data.frame(
+  Module = target_gene_185_sample$term_name
+)
+rownames(annotation_row) <- target_gene_185_sample$gene_module
+
+# 4. Choose a palette for your modules:
+modules <- unique(annotation_row$Module)
+module_colors <- setNames(
+  brewer.pal(min(length(modules), 12), "Set3"),
+  modules
+)
+annotation_colors <- list(
+  Module = module_colors,
+  group = assigned_colors
+)
+
+
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = FALSE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap.pdf")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap.png")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = TRUE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap_cluster.pdf")),
+       p, width = 8, height = 12, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap_cluster.png")),
+       p, width = 8, height = 12, units = "in", dpi = 300)
+
+
+
+
+
+
+
+
+
+
+```
+
+## Sample 002
+```{r miRNA_plot_185_002, fig.width=8, fig.height=16}
+target_gene_185 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                       "hsa-miR-185-5p_down_enrichment_GO_BP.csv"), stringsAsFactors = FALSE)
+
+# rename the gene to gene_module, the intersection_gene is the gene name
+target_gene_185 <- target_gene_185 %>%
+  rename(gene_module = gene,
+         gene = intersection_gene)
+
+gene_list <- unique(target_gene_185$gene) 
+
+comparisons_185 <- list(
+  c("22q001-185-OE", "22q001"),
+  c("22q002-185-OE", "22q002"),
+  c("004-185-KD", "004"),
+  c("007-185-KD", "007")
+)  
+# Paths
+result_root <- "./results/DEG-comparisons"
+dir.create(result_root, showWarnings = FALSE)
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                       "sample_info.csv")) %>%
+  mutate(condition = Diagnosis, 
+         sample_name = gsub("-", "_", Sample.ID..),
+         group = Diagnosis)
+
+
+pair <- comparisons_185 [[2]]
+
+
+
+compare_group <- pair[1]
+reference_group <- pair[2]
+pair_name <- paste0(compare_group, "_vs_", reference_group)
+
+
+result_folder <- file.path(result_root, pair_name)
+
+
+# Set thresholds dynamically
+if (grepl("DGCR8", compare_group, ignore.case = TRUE)) {
+  thresholds <- c(1.5, 2)
+} else {
+  thresholds <- c(0.5, 1, 1.5)
+}
+
+# Set result folder
+result_folder <- file.path(result_root, pair_name)
+Result_folder_structure(result_folder)
+
+# Filter samples and counts
+filter_sample_info <- condition_list %>% filter(group %in% c(reference_group, compare_group))
+filter_counts <- counts[, rownames(filter_sample_info)]
+
+dds_obj <- DEAnalysis(
+  counts = filter_counts,
+  reference_group = reference_group,
+  compare_group = compare_group,
+  condition_list = filter_sample_info,
+  target_gene = NULL,
+  result_folder = result_folder
+)
+
+vsd_obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+
+# make the color scale
+brewer_palette <- "RdBu"
+ramp <- colorRampPalette( RColorBrewer::brewer.pal(11, brewer_palette))
+mr <- ramp(256)[256:1]
+
+# color map
+unique_groups <- c(reference_group, compare_group)
+color_palette <- c("#10d5da","#fe867f")  # Extend this list if you have more groups
+assigned_colors <- setNames(color_palette[seq_along(unique_groups)], unique_groups)
+annotation_colors_row <- list(group = assigned_colors)
+annotation_col <- as.data.frame(colData(vsd_obj)[, "group", drop = FALSE])
+
+stabilized_counts <- assay(vsd_obj)
+row_variances <- rowVars(stabilized_counts)
+stabilized_counts <- stabilized_counts - rowMeans(stabilized_counts, na.rm=T)
+overlap_gene_list <- intersect(gene_list, rownames(stabilized_counts))
+stabilized_counts <- stabilized_counts[overlap_gene_list, rownames(annotation_col)]
+
+
+# turn the row name to gene 
+stabilized_counts_df <- as.data.frame(stabilized_counts) %>%
+  rownames_to_column(var = "gene")
+
+
+target_gene_185_sample <- left_join(
+  target_gene_185,
+  stabilized_counts_df,
+  by ="gene")
+
+# replace the Neuro witg neuro in target_gene_185_sample$term_name
+target_gene_185_sample$term_name <- gsub(
+  "Neuro", "neuro",
+  target_gene_185_sample$term_name
+)
+
+
+ref_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == reference_group)  %>% pull(sample)
+
+comp_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == compare_group)  %>% pull(sample)
+
+
+target_gene_185_sample$ref_mean <- rowMeans(
+  target_gene_185_sample %>%
+    dplyr::select(all_of(ref_samples)),
+)
+target_gene_185_sample$comp_mean <- rowMeans(
+  target_gene_185_sample %>%
+    dplyr::select(all_of(comp_samples)),
+)
+
+# If the  compare_group contain the "OE" in the name, then only keep the rows with  compare_group sample mean less then   reference_group mean
+if (grepl("OE", compare_group)) {
+  target_gene_185_sample <- target_gene_185_sample %>%
+    filter(
+      ref_mean > comp_mean,
+    )
+} else {
+  target_gene_185_sample <- target_gene_185_sample %>%
+    filter(
+      ref_mean < comp_mean,
+    )
+}
+
+
+# # filterout the gene iwth GRIA# and PLEKHG4
+# target_gene_185_sample <- target_gene_185_sample %>%
+#   filter(
+#     !grepl("EPAS1", gene_module),
+#     
+#     !grepl("RUNX1", gene_module)
+#   )
+
+
+# 1. Define which columns are your “expression” columns:
+#    (adjust these names if yours differ slightly)
+count_cols <- rownames(annotation_col)
+# 2. Extract a numeric matrix of counts, with genes as rownames
+mat <- target_gene_185_sample %>%
+  dplyr::select(all_of(count_cols)) %>%
+  as.matrix()
+rownames(mat) <- target_gene_185_sample$gene_module
+
+# 3. Build the row‑annotation data frame:
+annotation_row <- data.frame(
+  Module = target_gene_185_sample$term_name
+)
+rownames(annotation_row) <- target_gene_185_sample$gene_module
+
+# 4. Choose a palette for your modules:
+modules <- unique(annotation_row$Module)
+module_colors <- setNames(
+  brewer.pal(min(length(modules), 12), "Set3"),
+  modules
+)
+annotation_colors <- list(
+  Module = module_colors,
+  group = assigned_colors
+)
+
+
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = FALSE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap.pdf")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap.png")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = TRUE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap_cluster.pdf")),
+       p, width = 8, height = 12, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap_cluster.png")),
+       p, width = 8, height = 12, units = "in", dpi = 300)
+
+
+
+
+```
+
+## Sample 004
+```{r miRNA_plot_185_004, fig.width=8, fig.height=16}
+target_gene_185 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                       "hsa-miR-185-5p_down_enrichment_GO_BP.csv"), stringsAsFactors = FALSE)
+
+# rename the gene to gene_module, the intersection_gene is the gene name
+target_gene_185 <- target_gene_185 %>%
+  rename(gene_module = gene,
+         gene = intersection_gene)
+
+gene_list <- unique(target_gene_185$gene) 
+
+comparisons_185 <- list(
+  c("22q001-185-OE", "22q001"),
+  c("22q002-185-OE", "22q002"),
+  c("004-185-KD", "004"),
+  c("007-185-KD", "007")
+)  
+# Paths
+result_root <- "./results/DEG-comparisons"
+dir.create(result_root, showWarnings = FALSE)
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                       "sample_info.csv")) %>%
+  mutate(condition = Diagnosis, 
+         sample_name = gsub("-", "_", Sample.ID..),
+         group = Diagnosis)
+
+
+pair <- comparisons_185 [[3]]
+
+
+
+compare_group <- pair[1]
+reference_group <- pair[2]
+pair_name <- paste0(compare_group, "_vs_", reference_group)
+
+
+result_folder <- file.path(result_root, pair_name)
+
+
+
+# Set thresholds dynamically
+if (grepl("DGCR8", compare_group, ignore.case = TRUE)) {
+  thresholds <- c(1.5, 2)
+} else {
+  thresholds <- c(0.5, 1, 1.5)
+}
+
+# Set result folder
+result_folder <- file.path(result_root, pair_name)
+Result_folder_structure(result_folder)
+
+# Filter samples and counts
+filter_sample_info <- condition_list %>% filter(group %in% c(reference_group, compare_group))
+filter_counts <- counts[, rownames(filter_sample_info)]
+
+dds_obj <- DEAnalysis(
+  counts = filter_counts,
+  reference_group = reference_group,
+  compare_group = compare_group,
+  condition_list = filter_sample_info,
+  target_gene = NULL,
+  result_folder = result_folder
+)
+
+vsd_obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+
+# make the color scale
+brewer_palette <- "RdBu"
+ramp <- colorRampPalette( RColorBrewer::brewer.pal(11, brewer_palette))
+mr <- ramp(256)[256:1]
+
+# color map
+unique_groups <- c(reference_group, compare_group)
+color_palette <- c("#10d5da","#fe867f")  # Extend this list if you have more groups
+assigned_colors <- setNames(color_palette[seq_along(unique_groups)], unique_groups)
+annotation_colors_row <- list(group = assigned_colors)
+annotation_col <- as.data.frame(colData(vsd_obj)[, "group", drop = FALSE])
+
+stabilized_counts <- assay(vsd_obj)
+row_variances <- rowVars(stabilized_counts)
+stabilized_counts <- stabilized_counts - rowMeans(stabilized_counts, na.rm=T)
+overlap_gene_list <- intersect(gene_list, rownames(stabilized_counts))
+stabilized_counts <- stabilized_counts[overlap_gene_list, rownames(annotation_col)]
+
+
+# turn the row name to gene 
+stabilized_counts_df <- as.data.frame(stabilized_counts) %>%
+  rownames_to_column(var = "gene")
+
+
+target_gene_185_sample <- left_join(
+  target_gene_185,
+  stabilized_counts_df,
+  by ="gene")
+
+# replace the Neuro witg neuro in target_gene_185_sample$term_name
+target_gene_185_sample$term_name <- gsub(
+  "Neuro", "neuro",
+  target_gene_185_sample$term_name
+)
+
+
+ref_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == reference_group)  %>% pull(sample)
+
+comp_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == compare_group)  %>% pull(sample)
+
+
+target_gene_185_sample$ref_mean <- rowMeans(
+  target_gene_185_sample %>%
+    dplyr::select(all_of(ref_samples)),
+)
+target_gene_185_sample$comp_mean <- rowMeans(
+  target_gene_185_sample %>%
+    dplyr::select(all_of(comp_samples)),
+)
+
+# If the  compare_group contain the "OE" in the name, then only keep the rows with  compare_group sample mean less then   reference_group mean
+if (grepl("OE", compare_group)) {
+  target_gene_185_sample <- target_gene_185_sample %>%
+    filter(
+      ref_mean > comp_mean,
+    )
+} else {
+  target_gene_185_sample <- target_gene_185_sample %>%
+    filter(
+      ref_mean < comp_mean,
+    )
+}
+
+
+# # filterout the gene iwth GRIA# and PLEKHG4
+# target_gene_185_sample <- target_gene_185_sample %>%
+#   filter(
+#     !grepl("EPAS1", gene_module),
+#     
+#     !grepl("RUNX1", gene_module)
+#   )
+
+
+# 1. Define which columns are your “expression” columns:
+#    (adjust these names if yours differ slightly)
+count_cols <- rownames(annotation_col)
+# 2. Extract a numeric matrix of counts, with genes as rownames
+mat <- target_gene_185_sample %>%
+  dplyr::select(all_of(count_cols)) %>%
+  as.matrix()
+rownames(mat) <- target_gene_185_sample$gene_module
+
+# 3. Build the row‑annotation data frame:
+annotation_row <- data.frame(
+  Module = target_gene_185_sample$term_name
+)
+rownames(annotation_row) <- target_gene_185_sample$gene_module
+
+# 4. Choose a palette for your modules:
+modules <- unique(annotation_row$Module)
+module_colors <- setNames(
+  brewer.pal(min(length(modules), 12), "Set3"),
+  modules
+)
+annotation_colors <- list(
+  Module = module_colors,
+  group = assigned_colors
+)
+
+
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = FALSE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap.pdf")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap.png")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = TRUE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap_cluster.pdf")),
+       p, width = 8, height = 12, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap_cluster.png")),
+       p, width = 8, height = 12, units = "in", dpi = 300)
+
+
+
+```
+
+## Sample 007
+```{r miRNA_plot_185_007, fig.width=8, fig.height=16}
+target_gene_185 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                       "hsa-miR-185-5p_down_enrichment_GO_BP.csv"), stringsAsFactors = FALSE)
+
+# rename the gene to gene_module, the intersection_gene is the gene name
+target_gene_185 <- target_gene_185 %>%
+  rename(gene_module = gene,
+         gene = intersection_gene)
+
+gene_list <- unique(target_gene_185$gene) 
+
+comparisons_185 <- list(
+  c("22q001-185-OE", "22q001"),
+  c("22q002-185-OE", "22q002"),
+  c("004-185-KD", "004"),
+  c("007-185-KD", "007")
+)  
+# Paths
+result_root <- "./results/DEG-comparisons"
+dir.create(result_root, showWarnings = FALSE)
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                       "sample_info.csv")) %>%
+  mutate(condition = Diagnosis, 
+         sample_name = gsub("-", "_", Sample.ID..),
+         group = Diagnosis)
+
+
+pair <- comparisons_185 [[4]]
+
+
+
+compare_group <- pair[1]
+reference_group <- pair[2]
+pair_name <- paste0(compare_group, "_vs_", reference_group)
+
+
+result_folder <- file.path(result_root, pair_name)
+
+
+# Set thresholds dynamically
+if (grepl("DGCR8", compare_group, ignore.case = TRUE)) {
+  thresholds <- c(1.5, 2)
+} else {
+  thresholds <- c(0.5, 1, 1.5)
+}
+
+# Set result folder
+result_folder <- file.path(result_root, pair_name)
+Result_folder_structure(result_folder)
+
+# Filter samples and counts
+filter_sample_info <- condition_list %>% filter(group %in% c(reference_group, compare_group))
+filter_counts <- counts[, rownames(filter_sample_info)]
+
+dds_obj <- DEAnalysis(
+  counts = filter_counts,
+  reference_group = reference_group,
+  compare_group = compare_group,
+  condition_list = filter_sample_info,
+  target_gene = NULL,
+  result_folder = result_folder
+)
+
+vsd_obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+
+# make the color scale
+brewer_palette <- "RdBu"
+ramp <- colorRampPalette( RColorBrewer::brewer.pal(11, brewer_palette))
+mr <- ramp(256)[256:1]
+
+# color map
+unique_groups <- c(reference_group, compare_group)
+color_palette <- c("#10d5da","#fe867f")  # Extend this list if you have more groups
+assigned_colors <- setNames(color_palette[seq_along(unique_groups)], unique_groups)
+annotation_colors_row <- list(group = assigned_colors)
+annotation_col <- as.data.frame(colData(vsd_obj)[, "group", drop = FALSE])
+
+
+
+stabilized_counts <- assay(vsd_obj)
+row_variances <- rowVars(stabilized_counts)
+stabilized_counts <- stabilized_counts - rowMeans(stabilized_counts, na.rm=T)
+overlap_gene_list <- intersect(gene_list, rownames(stabilized_counts))
+stabilized_counts <- stabilized_counts[overlap_gene_list, rownames(annotation_col)]
+
+
+# turn the row name to gene 
+stabilized_counts_df <- as.data.frame(stabilized_counts) %>%
+  rownames_to_column(var = "gene")
+
+
+target_gene_185_sample <- left_join(
+  target_gene_185,
+  stabilized_counts_df,
+  by ="gene")
+
+# replace the Neuro witg neuro in target_gene_185_sample$term_name
+target_gene_185_sample$term_name <- gsub(
+  "Neuro", "neuro",
+  target_gene_185_sample$term_name
+)
+
+
+ref_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == reference_group)  %>% pull(sample)
+
+comp_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == compare_group)  %>% pull(sample)
+
+
+target_gene_185_sample$ref_mean <- rowMeans(
+  target_gene_185_sample %>%
+    dplyr::select(all_of(ref_samples)),
+)
+target_gene_185_sample$comp_mean <- rowMeans(
+  target_gene_185_sample %>%
+    dplyr::select(all_of(comp_samples)),
+)
+
+# If the  compare_group contain the "OE" in the name, then only keep the rows with  compare_group sample mean less then   reference_group mean
+if (grepl("OE", compare_group)) {
+  target_gene_185_sample <- target_gene_185_sample %>%
+    filter(
+      ref_mean > comp_mean,
+    )
+} else {
+  target_gene_185_sample <- target_gene_185_sample %>%
+    filter(
+      ref_mean < comp_mean,
+    )
+}
+
+
+# # filterout the gene iwth GRIA# and PLEKHG4
+target_gene_185_sample <- target_gene_185_sample %>%
+  filter(
+    !grepl("PDE3A", gene_module),
+    !grepl("PITX1", gene_module),
+    !grepl("FN1", gene_module),
+    !grepl("CREB3L2", gene_module),
+    !grepl("ETS1", gene_module),
+    !grepl("PCDHGB3", gene_module),
+    !grepl("TGFBR2", gene_module),
+    
+    !grepl("LDLRAP1", gene_module),
+    !grepl("PCDH18", gene_module)
+    
+  )
+
+
+# 1. Define which columns are your “expression” columns:
+#    (adjust these names if yours differ slightly)
+count_cols <- rownames(annotation_col)
+# 2. Extract a numeric matrix of counts, with genes as rownames
+mat <- target_gene_185_sample %>%
+  dplyr::select(all_of(count_cols)) %>%
+  as.matrix()
+rownames(mat) <- target_gene_185_sample$gene_module
+
+# 3. Build the row‑annotation data frame:
+annotation_row <- data.frame(
+  Module = target_gene_185_sample$term_name
+)
+rownames(annotation_row) <- target_gene_185_sample$gene_module
+
+# 4. Choose a palette for your modules:
+modules <- unique(annotation_row$Module)
+module_colors <- setNames(
+  brewer.pal(min(length(modules), 12), "Set3"),
+  modules
+)
+annotation_colors <- list(
+  Module = module_colors,
+  group = assigned_colors
+)
+
+
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = FALSE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap.pdf")),
+       p, width = 8, height = 12, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap.png")),
+       p, width = 8, height = 12, units = "in", dpi = 300)
+
+
+
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = TRUE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap_cluster.pdf")),
+       p, width = 8, height = 12, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_miRNA_target_heatmap_cluster.png")),
+       p, width = 8, height = 12, units = "in", dpi = 300)
+
+
+
+
+
+
+
+
+
+
+```
+
+
+\newpage
+# DGCR8
+
+
+## miRNA 128
+### Sample 001
+```{r miRNA_plot_DGCR8_128_001, fig.width=8, fig.height=16}
+target_gene_128 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                       "hsa-miR-128-3p_down_enrichment_GO_BP.csv"), stringsAsFactors = FALSE)
+# rename the gene to gene_module, the intersection_gene is the gene name
+target_gene_128 <- target_gene_128 %>%
+  rename(gene_module = gene,
+         gene = intersection_gene)
+
+gene_list <- unique(target_gene_128$gene) 
+
+comparisons_DGCR8_128 <- list(
+  c("22q001-DGCR8-OE", "22q001"),
+  c("22q002-DGCR8-OE", "22q002")
+)  
+# Paths
+result_root <- "./results/DEG-comparisons"
+dir.create(result_root, showWarnings = FALSE)
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                       "sample_info.csv")) %>%
+  mutate(condition = Diagnosis, 
+         sample_name = gsub("-", "_", Sample.ID..),
+         group = Diagnosis)
+
+
+pair <- comparisons_DGCR8_128 [[1]]
+
+
+
+compare_group <- pair[1]
+reference_group <- pair[2]
+pair_name <- paste0(compare_group, "_vs_", reference_group)
+
+
+result_folder <- file.path(result_root, pair_name)
+
+
+
+# Set thresholds dynamically
+if (grepl("DGCR8", compare_group, ignore.case = TRUE)) {
+  thresholds <- c(1.5, 2)
+} else {
+  thresholds <- c(0.5, 1, 1.5)
+}
+
+# Set result folder
+result_folder <- file.path(result_root, pair_name)
+Result_folder_structure(result_folder)
+
+# Filter samples and counts
+filter_sample_info <- condition_list %>% filter(group %in% c(reference_group, compare_group))
+filter_counts <- counts[, rownames(filter_sample_info)]
+
+dds_obj <- DEAnalysis(
+  counts = filter_counts,
+  reference_group = reference_group,
+  compare_group = compare_group,
+  condition_list = filter_sample_info,
+  target_gene = NULL,
+  result_folder = result_folder
+)
+
+vsd_obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+
+# make the color scale
+brewer_palette <- "RdBu"
+ramp <- colorRampPalette( RColorBrewer::brewer.pal(11, brewer_palette))
+mr <- ramp(256)[256:1]
+
+# color map
+unique_groups <- c(reference_group, compare_group)
+color_palette <- c("#10d5da","#fe867f")  # Extend this list if you have more groups
+assigned_colors <- setNames(color_palette[seq_along(unique_groups)], unique_groups)
+annotation_colors_row <- list(group = assigned_colors)
+annotation_col <- as.data.frame(colData(vsd_obj)[, "group", drop = FALSE])
+
+stabilized_counts <- assay(vsd_obj)
+row_variances <- rowVars(stabilized_counts)
+stabilized_counts <- stabilized_counts - rowMeans(stabilized_counts, na.rm=T)
+overlap_genes <- intersect(rownames(stabilized_counts), gene_list)
+stabilized_counts <- stabilized_counts[overlap_genes, rownames(annotation_col)]
+
+
+# turn the row name to gene 
+stabilized_counts_df <- as.data.frame(stabilized_counts) %>%
+  rownames_to_column(var = "gene")
+
+
+target_gene_128_sample <- left_join(
+  target_gene_128,
+  stabilized_counts_df,
+  by ="gene")
+
+# replace the Neuro witg neuro in target_gene_128_sample$term_name
+target_gene_128_sample$term_name <- gsub(
+  "Neuro", "neuro",
+  target_gene_128_sample$term_name
+)
+
+
+ref_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == reference_group)  %>% pull(sample)
+
+comp_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == compare_group)  %>% pull(sample)
+
+
+target_gene_128_sample$ref_mean <- rowMeans(
+  target_gene_128_sample %>%
+    dplyr::select(all_of(ref_samples)),
+)
+target_gene_128_sample$comp_mean <- rowMeans(
+  target_gene_128_sample %>%
+    dplyr::select(all_of(comp_samples)),
+)
+
+
+
+target_gene_128_sample <- target_gene_128_sample %>%
+  filter(
+    ref_mean > comp_mean,
+  )
+
+
+# # filterout the gene iwth GRIA# and PLEKHG4
+target_gene_128_sample <- target_gene_128_sample %>%
+  filter(
+    !grepl("FOXC1", gene_module)
+  )
+
+
+# 1. Define which columns are your “expression” columns:
+#    (adjust these names if yours differ slightly)
+count_cols <- rownames(annotation_col)
+# 2. Extract a numeric matrix of counts, with genes as rownames
+mat <- target_gene_128_sample %>%
+  dplyr::select(all_of(count_cols)) %>%
+  as.matrix()
+rownames(mat) <- target_gene_128_sample$gene_module
+
+# 3. Build the row‑annotation data frame:
+annotation_row <- data.frame(
+  Module = target_gene_128_sample$term_name
+)
+rownames(annotation_row) <- target_gene_128_sample$gene_module
+
+# 4. Choose a palette for your modules:
+modules <- unique(annotation_row$Module)
+module_colors <- setNames(
+  brewer.pal(min(length(modules), 12), "Set3"),
+  modules
+)
+annotation_colors <- list(
+  Module = module_colors,
+  group = assigned_colors
+)
+
+
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = FALSE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_DGCR8_miRNA_128_target_heatmap.pdf")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_DGCR8_miRNA_128_target_heatmap.png")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = T,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_DGCR8_miRNA_128_target_heatmap_cluster.pdf")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_DGCR8_miRNA_128_target_heatmap_cluster.png")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+
+
+
+
+
+
+```
+
+### Sample 002
+```{r miRNA_plot_DGCR8_128_002, fig.width=8, fig.height=16}
+target_gene_128 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                       "hsa-miR-128-3p_down_enrichment_GO_BP.csv"), stringsAsFactors = FALSE)
+# rename the gene to gene_module, the intersection_gene is the gene name
+target_gene_128 <- target_gene_128 %>%
+  rename(gene_module = gene,
+         gene = intersection_gene)
+
+gene_list <- unique(target_gene_128$gene) 
+
+comparisons_DGCR8_128 <- list(
+  c("22q001-DGCR8-OE", "22q001"),
+  c("22q002-DGCR8-OE", "22q002")
+)  
+# Paths
+result_root <- "./results/DEG-comparisons"
+dir.create(result_root, showWarnings = FALSE)
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                       "sample_info.csv")) %>%
+  mutate(condition = Diagnosis, 
+         sample_name = gsub("-", "_", Sample.ID..),
+         group = Diagnosis)
+
+
+pair <- comparisons_DGCR8_128 [[2]]
+
+
+
+compare_group <- pair[1]
+reference_group <- pair[2]
+pair_name <- paste0(compare_group, "_vs_", reference_group)
+
+
+result_folder <- file.path(result_root, pair_name)
+
+
+
+
+# Set thresholds dynamically
+if (grepl("DGCR8", compare_group, ignore.case = TRUE)) {
+  thresholds <- c(1.5, 2)
+} else {
+  thresholds <- c(0.5, 1, 1.5)
+}
+
+# Set result folder
+result_folder <- file.path(result_root, pair_name)
+Result_folder_structure(result_folder)
+
+# Filter samples and counts
+filter_sample_info <- condition_list %>% filter(group %in% c(reference_group, compare_group))
+filter_counts <- counts[, rownames(filter_sample_info)]
+
+dds_obj <- DEAnalysis(
+  counts = filter_counts,
+  reference_group = reference_group,
+  compare_group = compare_group,
+  condition_list = filter_sample_info,
+  target_gene = NULL,
+  result_folder = result_folder
+)
+
+vsd_obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+
+# make the color scale
+brewer_palette <- "RdBu"
+ramp <- colorRampPalette( RColorBrewer::brewer.pal(11, brewer_palette))
+mr <- ramp(256)[256:1]
+
+# color map
+unique_groups <- c(reference_group, compare_group)
+color_palette <- c("#10d5da","#fe867f")  # Extend this list if you have more groups
+assigned_colors <- setNames(color_palette[seq_along(unique_groups)], unique_groups)
+annotation_colors_row <- list(group = assigned_colors)
+annotation_col <- as.data.frame(colData(vsd_obj)[, "group", drop = FALSE])
+
+stabilized_counts <- assay(vsd_obj)
+row_variances <- rowVars(stabilized_counts)
+stabilized_counts <- stabilized_counts - rowMeans(stabilized_counts, na.rm=T)
+overlap_genes <- intersect(rownames(stabilized_counts), gene_list)
+stabilized_counts <- stabilized_counts[overlap_genes, rownames(annotation_col)]
+
+
+# turn the row name to gene 
+stabilized_counts_df <- as.data.frame(stabilized_counts) %>%
+  rownames_to_column(var = "gene")
+
+
+target_gene_128_sample <- left_join(
+  target_gene_128,
+  stabilized_counts_df,
+  by ="gene")
+
+# replace the Neuro witg neuro in target_gene_128_sample$term_name
+target_gene_128_sample$term_name <- gsub(
+  "Neuro", "neuro",
+  target_gene_128_sample$term_name
+)
+
+
+ref_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == reference_group)  %>% pull(sample)
+
+comp_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == compare_group)  %>% pull(sample)
+
+
+target_gene_128_sample$ref_mean <- rowMeans(
+  target_gene_128_sample %>%
+    dplyr::select(all_of(ref_samples)),
+)
+target_gene_128_sample$comp_mean <- rowMeans(
+  target_gene_128_sample %>%
+    dplyr::select(all_of(comp_samples)),
+)
+
+
+
+target_gene_128_sample <- target_gene_128_sample %>%
+  filter(
+    ref_mean > comp_mean,
+  )
+
+
+# # filterout the gene iwth GRIA# and PLEKHG4
+target_gene_128_sample <- target_gene_128_sample %>%
+  filter(
+    !grepl("KLHL31", gene_module),
+    !grepl("AJUBA", gene_module),
+  )
+
+
+# 1. Define which columns are your “expression” columns:
+#    (adjust these names if yours differ slightly)
+count_cols <- rownames(annotation_col)
+# 2. Extract a numeric matrix of counts, with genes as rownames
+mat <- target_gene_128_sample %>%
+  dplyr::select(all_of(count_cols)) %>%
+  as.matrix()
+rownames(mat) <- target_gene_128_sample$gene_module
+
+# 3. Build the row‑annotation data frame:
+annotation_row <- data.frame(
+  Module = target_gene_128_sample$term_name
+)
+rownames(annotation_row) <- target_gene_128_sample$gene_module
+
+# 4. Choose a palette for your modules:
+modules <- unique(annotation_row$Module)
+module_colors <- setNames(
+  brewer.pal(min(length(modules), 12), "Set3"),
+  modules
+)
+annotation_colors <- list(
+  Module = module_colors,
+  group = assigned_colors
+)
+
+
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = FALSE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_DGCR8_miRNA_128_target_heatmap.pdf")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_DGCR8_miRNA_128_target_heatmap.png")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = T,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_DGCR8_miRNA_128_target_heatmap_cluster.pdf")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_DGCR8_miRNA_128_target_heatmap_cluster.png")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+
+
+
+```
+
+
+
+## miRNA 185
+### Sample 001
+```{r miRNA_plot_DGCR8_185_001, fig.width=8, fig.height=16}
+target_gene_185 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                       "hsa-miR-185-5p_down_enrichment_GO_BP.csv"), stringsAsFactors = FALSE)
+
+# rename the gene to gene_module, the intersection_gene is the gene name
+target_gene_185 <- target_gene_185 %>%
+  rename(gene_module = gene,
+         gene = intersection_gene)
+
+gene_list <- unique(target_gene_185$gene) 
+
+comparisons_DGCR8_185 <- list(
+  c("22q001-DGCR8-OE", "22q001"),
+  c("22q002-DGCR8-OE", "22q002")
+)  
+# Paths
+result_root <- "./results/DEG-comparisons"
+dir.create(result_root, showWarnings = FALSE)
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                       "sample_info.csv")) %>%
+  mutate(condition = Diagnosis, 
+         sample_name = gsub("-", "_", Sample.ID..),
+         group = Diagnosis)
+
+
+pair <- comparisons_DGCR8_185 [[1]]
+
+
+
+compare_group <- pair[1]
+reference_group <- pair[2]
+pair_name <- paste0(compare_group, "_vs_", reference_group)
+
+
+result_folder <- file.path(result_root, pair_name)
+
+
+
+
+# Set thresholds dynamically
+if (grepl("DGCR8", compare_group, ignore.case = TRUE)) {
+  thresholds <- c(1.5, 2)
+} else {
+  thresholds <- c(0.5, 1, 1.5)
+}
+
+# Set result folder
+result_folder <- file.path(result_root, pair_name)
+Result_folder_structure(result_folder)
+
+# Filter samples and counts
+filter_sample_info <- condition_list %>% filter(group %in% c(reference_group, compare_group))
+filter_counts <- counts[, rownames(filter_sample_info)]
+
+dds_obj <- DEAnalysis(
+  counts = filter_counts,
+  reference_group = reference_group,
+  compare_group = compare_group,
+  condition_list = filter_sample_info,
+  target_gene = NULL,
+  result_folder = result_folder
+)
+
+vsd_obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+
+# make the color scale
+brewer_palette <- "RdBu"
+ramp <- colorRampPalette( RColorBrewer::brewer.pal(11, brewer_palette))
+mr <- ramp(256)[256:1]
+
+# color map
+unique_groups <- c(reference_group, compare_group)
+color_palette <- c("#10d5da","#fe867f")  # Extend this list if you have more groups
+assigned_colors <- setNames(color_palette[seq_along(unique_groups)], unique_groups)
+annotation_colors_row <- list(group = assigned_colors)
+annotation_col <- as.data.frame(colData(vsd_obj)[, "group", drop = FALSE])
+
+stabilized_counts <- assay(vsd_obj)
+row_variances <- rowVars(stabilized_counts)
+stabilized_counts <- stabilized_counts - rowMeans(stabilized_counts, na.rm=T)
+overlap_genes <- intersect(rownames(stabilized_counts), gene_list)
+stabilized_counts <- stabilized_counts[overlap_genes, rownames(annotation_col)]
+
+
+# turn the row name to gene 
+stabilized_counts_df <- as.data.frame(stabilized_counts) %>%
+  rownames_to_column(var = "gene")
+
+
+target_gene_185_sample <- left_join(
+  target_gene_185,
+  stabilized_counts_df,
+  by ="gene")
+
+# replace the Neuro witg neuro in target_gene_185_sample$term_name
+target_gene_185_sample$term_name <- gsub(
+  "Neuro", "neuro",
+  target_gene_185_sample$term_name
+)
+
+
+ref_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == reference_group)  %>% pull(sample)
+
+comp_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == compare_group)  %>% pull(sample)
+
+
+target_gene_185_sample$ref_mean <- rowMeans(
+  target_gene_185_sample %>%
+    dplyr::select(all_of(ref_samples)),
+)
+target_gene_185_sample$comp_mean <- rowMeans(
+  target_gene_185_sample %>%
+    dplyr::select(all_of(comp_samples)),
+)
+
+
+
+target_gene_185_sample <- target_gene_185_sample %>%
+  filter(
+    ref_mean > comp_mean,
+  )
+
+
+# # filterout the gene iwth GRIA# and PLEKHG4
+target_gene_185_sample <- target_gene_185_sample %>%
+  filter(
+    !grepl("DAB2", gene_module)
+  )
+
+
+# 1. Define which columns are your “expression” columns:
+#    (adjust these names if yours differ slightly)
+count_cols <- rownames(annotation_col)
+# 2. Extract a numeric matrix of counts, with genes as rownames
+mat <- target_gene_185_sample %>%
+  dplyr::select(all_of(count_cols)) %>%
+  as.matrix()
+rownames(mat) <- target_gene_185_sample$gene_module
+
+# 3. Build the row‑annotation data frame:
+annotation_row <- data.frame(
+  Module = target_gene_185_sample$term_name
+)
+rownames(annotation_row) <- target_gene_185_sample$gene_module
+
+# 4. Choose a palette for your modules:
+modules <- unique(annotation_row$Module)
+module_colors <- setNames(
+  brewer.pal(min(length(modules), 12), "Set3"),
+  modules
+)
+annotation_colors <- list(
+  Module = module_colors,
+  group = assigned_colors
+)
+
+
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = FALSE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_DGCR8_miRNA_185_target_heatmap.pdf")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_DGCR8_miRNA_185_target_heatmap.png")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = TRUE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_DGCR8_miRNA_185_target_heatmap_cluster.pdf")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_DGCR8_miRNA_185_target_heatmap_cluster.png")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+
+
+
+
+
+
+
+```
+
+
+### Sample 002
+```{r miRNA_plot_DGCR8_185_002, fig.width=8, fig.height=16}
+target_gene_185 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                       "hsa-miR-185-5p_down_enrichment_GO_BP.csv"), stringsAsFactors = FALSE)
+
+# rename the gene to gene_module, the intersection_gene is the gene name
+target_gene_185 <- target_gene_185 %>%
+  rename(gene_module = gene,
+         gene = intersection_gene)
+
+gene_list <- unique(target_gene_185$gene) 
+
+comparisons_DGCR8_185 <- list(
+  c("22q001-DGCR8-OE", "22q001"),
+  c("22q002-DGCR8-OE", "22q002")
+)  
+# Paths
+result_root <- "./results/DEG-comparisons"
+dir.create(result_root, showWarnings = FALSE)
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                       "sample_info.csv")) %>%
+  mutate(condition = Diagnosis, 
+         sample_name = gsub("-", "_", Sample.ID..),
+         group = Diagnosis)
+
+
+pair <- comparisons_DGCR8_185 [[2]]
+
+
+
+compare_group <- pair[1]
+reference_group <- pair[2]
+pair_name <- paste0(compare_group, "_vs_", reference_group)
+
+result_folder <- file.path(result_root, pair_name)
+
+
+
+# Set thresholds dynamically
+if (grepl("DGCR8", compare_group, ignore.case = TRUE)) {
+  thresholds <- c(1.5, 2)
+} else {
+  thresholds <- c(0.5, 1, 1.5)
+}
+
+# Set result folder
+result_folder <- file.path(result_root, pair_name)
+Result_folder_structure(result_folder)
+
+# Filter samples and counts
+filter_sample_info <- condition_list %>% filter(group %in% c(reference_group, compare_group))
+filter_counts <- counts[, rownames(filter_sample_info)]
+
+dds_obj <- DEAnalysis(
+  counts = filter_counts,
+  reference_group = reference_group,
+  compare_group = compare_group,
+  condition_list = filter_sample_info,
+  target_gene = NULL,
+  result_folder = result_folder
+)
+
+vsd_obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+
+# make the color scale
+brewer_palette <- "RdBu"
+ramp <- colorRampPalette( RColorBrewer::brewer.pal(11, brewer_palette))
+mr <- ramp(256)[256:1]
+
+# color map
+unique_groups <- c(reference_group, compare_group)
+color_palette <- c("#10d5da","#fe867f")  # Extend this list if you have more groups
+assigned_colors <- setNames(color_palette[seq_along(unique_groups)], unique_groups)
+annotation_colors_row <- list(group = assigned_colors)
+annotation_col <- as.data.frame(colData(vsd_obj)[, "group", drop = FALSE])
+
+stabilized_counts <- assay(vsd_obj)
+row_variances <- rowVars(stabilized_counts)
+stabilized_counts <- stabilized_counts - rowMeans(stabilized_counts, na.rm=T)
+overlap_genes <- intersect(rownames(stabilized_counts), gene_list)
+stabilized_counts <- stabilized_counts[overlap_genes, rownames(annotation_col)]
+
+
+# turn the row name to gene 
+stabilized_counts_df <- as.data.frame(stabilized_counts) %>%
+  rownames_to_column(var = "gene")
+
+
+target_gene_185_sample <- left_join(
+  target_gene_185,
+  stabilized_counts_df,
+  by ="gene")
+
+# replace the Neuro witg neuro in target_gene_185_sample$term_name
+target_gene_185_sample$term_name <- gsub(
+  "Neuro", "neuro",
+  target_gene_185_sample$term_name
+)
+
+
+ref_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == reference_group)  %>% pull(sample)
+
+comp_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == compare_group)  %>% pull(sample)
+
+
+target_gene_185_sample$ref_mean <- rowMeans(
+  target_gene_185_sample %>%
+    dplyr::select(all_of(ref_samples)),
+)
+target_gene_185_sample$comp_mean <- rowMeans(
+  target_gene_185_sample %>%
+    dplyr::select(all_of(comp_samples)),
+)
+
+
+
+target_gene_185_sample <- target_gene_185_sample %>%
+  filter(
+    ref_mean > comp_mean,
+  )
+
+
+# # filterout the gene iwth GRIA# and PLEKHG4
+target_gene_185_sample <- target_gene_185_sample %>%
+  filter(
+    !grepl("KLHL31", gene_module)
+  )
+
+
+# 1. Define which columns are your “expression” columns:
+#    (adjust these names if yours differ slightly)
+count_cols <- rownames(annotation_col)
+# 2. Extract a numeric matrix of counts, with genes as rownames
+mat <- target_gene_185_sample %>%
+  dplyr::select(all_of(count_cols)) %>%
+  as.matrix()
+rownames(mat) <- target_gene_185_sample$gene_module
+
+# 3. Build the row‑annotation data frame:
+annotation_row <- data.frame(
+  Module = target_gene_185_sample$term_name
+)
+rownames(annotation_row) <- target_gene_185_sample$gene_module
+
+# 4. Choose a palette for your modules:
+modules <- unique(annotation_row$Module)
+module_colors <- setNames(
+  brewer.pal(min(length(modules), 12), "Set3"),
+  modules
+)
+annotation_colors <- list(
+  Module = module_colors,
+  group = assigned_colors
+)
+
+
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = FALSE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_DGCR8_miRNA_185_target_heatmap.pdf")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_DGCR8_miRNA_185_target_heatmap.png")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = TRUE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_DGCR8_miRNA_185_target_heatmap_cluster.pdf")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_DGCR8_miRNA_185_target_heatmap_cluster.png")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+
+
+```
+
+\newpage
+## miRNA 214
+### Sample 001
+```{r miRNA_plot_DGCR8_214_001, fig.width=8, fig.height=16}
+target_gene_214 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                       "hsa-miR-214-3p_up_enrichment_GO_BP.csv"), stringsAsFactors = FALSE, row.names = 1)
+
+# rename the gene to gene_module, the intersection_gene is the gene name
+target_gene_214 <- target_gene_214 %>%
+  rename(gene_module = gene,
+         gene = intersection_gene)
+
+gene_list <- unique(target_gene_214$gene) 
+
+comparisons_DGCR8_214 <- list(
+  c("22q001-DGCR8-OE", "22q001"),
+  c("22q002-DGCR8-OE", "22q002")
+)  
+# Paths
+result_root <- "./results/DEG-comparisons"
+dir.create(result_root, showWarnings = FALSE)
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                       "sample_info.csv")) %>%
+  mutate(condition = Diagnosis, 
+         sample_name = gsub("-", "_", Sample.ID..),
+         group = Diagnosis)
+
+
+pair <- comparisons_DGCR8_214 [[1]]
+
+
+
+compare_group <- pair[1]
+reference_group <- pair[2]
+pair_name <- paste0(compare_group, "_vs_", reference_group)
+
+result_folder <- file.path(result_root, pair_name)
+
+
+
+# Set thresholds dynamically
+if (grepl("DGCR8", compare_group, ignore.case = TRUE)) {
+  thresholds <- c(1.5, 2)
+} else {
+  thresholds <- c(0.5, 1, 1.5)
+}
+
+# Set result folder
+result_folder <- file.path(result_root, pair_name)
+Result_folder_structure(result_folder)
+
+# Filter samples and counts
+filter_sample_info <- condition_list %>% filter(group %in% c(reference_group, compare_group))
+filter_counts <- counts[, rownames(filter_sample_info)]
+
+dds_obj <- DEAnalysis(
+  counts = filter_counts,
+  reference_group = reference_group,
+  compare_group = compare_group,
+  condition_list = filter_sample_info,
+  target_gene = NULL,
+  result_folder = result_folder
+)
+
+vsd_obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+
+# make the color scale
+brewer_palette <- "RdBu"
+ramp <- colorRampPalette( RColorBrewer::brewer.pal(11, brewer_palette))
+mr <- ramp(256)[256:1]
+
+# color map
+unique_groups <- c(reference_group, compare_group)
+color_palette <- c("#10d5da","#fe867f")  # Extend this list if you have more groups
+assigned_colors <- setNames(color_palette[seq_along(unique_groups)], unique_groups)
+annotation_colors_row <- list(group = assigned_colors)
+annotation_col <- as.data.frame(colData(vsd_obj)[, "group", drop = FALSE])
+
+stabilized_counts <- assay(vsd_obj)
+row_variances <- rowVars(stabilized_counts)
+stabilized_counts <- stabilized_counts - rowMeans(stabilized_counts, na.rm=T)
+overlap_genes <- intersect(rownames(stabilized_counts), gene_list)
+stabilized_counts <- stabilized_counts[overlap_genes, rownames(annotation_col)]
+
+
+# turn the row name to gene 
+stabilized_counts_df <- as.data.frame(stabilized_counts) %>%
+  rownames_to_column(var = "gene")
+
+
+target_gene_214_sample <- left_join(
+  target_gene_214,
+  stabilized_counts_df,
+  by ="gene")
+
+# replace the Neuro witg neuro in target_gene_214_sample$term_name
+target_gene_214_sample$term_name <- gsub(
+  "Neuro", "neuro",
+  target_gene_214_sample$term_name
+)
+
+
+ref_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == reference_group)  %>% pull(sample)
+
+comp_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == compare_group)  %>% pull(sample)
+
+
+target_gene_214_sample$ref_mean <- rowMeans(
+  target_gene_214_sample %>%
+    dplyr::select(all_of(ref_samples)),
+)
+target_gene_214_sample$comp_mean <- rowMeans(
+  target_gene_214_sample %>%
+    dplyr::select(all_of(comp_samples)),
+)
+
+
+
+# target_gene_214_sample <- target_gene_214_sample %>%
+#   filter(
+#     ref_mean > comp_mean,
+#   )
+
+
+# # filterout the gene iwth GRIA# and PLEKHG4
+target_gene_214_sample <- target_gene_214_sample %>%
+  filter(
+    !grepl("KLHL31", gene_module)
+  )
+
+
+# 1. Define which columns are your “expression” columns:
+#    (adjust these names if yours differ slightly)
+count_cols <- rownames(annotation_col)
+# 2. Extract a numeric matrix of counts, with genes as rownames
+mat <- target_gene_214_sample %>%
+  dplyr::select(all_of(count_cols)) %>%
+  as.matrix()
+rownames(mat) <- target_gene_214_sample$gene_module
+
+# 3. Build the row‑annotation data frame:
+annotation_row <- data.frame(
+  Module = target_gene_214_sample$term_name
+)
+rownames(annotation_row) <- target_gene_214_sample$gene_module
+
+# 4. Choose a palette for your modules:
+modules <- unique(annotation_row$Module)
+module_colors <- setNames(
+  brewer.pal(min(length(modules), 12), "Set3"),
+  modules
+)
+annotation_colors <- list(
+  Module = module_colors,
+  group = assigned_colors
+)
+
+
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = FALSE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_DGCR8_miRNA_214_target_heatmap.pdf")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_DGCR8_miRNA_214_target_heatmap.png")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = TRUE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_DGCR8_miRNA_214_target_heatmap_cluster.pdf")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_DGCR8_miRNA_214_target_heatmap_cluster.png")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+
+
+
+
+
+
+
+
+```
+
+
+### Sample 002
+```{r miRNA_plot_DGCR8_214_002, fig.width=8, fig.height=16}
+target_gene_214 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                       "hsa-miR-214-3p_up_enrichment_GO_BP.csv"), stringsAsFactors = FALSE, row.names = 1)
+
+# rename the gene to gene_module, the intersection_gene is the gene name
+target_gene_214 <- target_gene_214 %>%
+  rename(gene_module = gene,
+         gene = intersection_gene)
+
+gene_list <- unique(target_gene_214$gene) 
+
+comparisons_DGCR8_214 <- list(
+  c("22q001-DGCR8-OE", "22q001"),
+  c("22q002-DGCR8-OE", "22q002")
+)  
+# Paths
+result_root <- "./results/DEG-comparisons"
+dir.create(result_root, showWarnings = FALSE)
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                       "sample_info.csv")) %>%
+  mutate(condition = Diagnosis, 
+         sample_name = gsub("-", "_", Sample.ID..),
+         group = Diagnosis)
+
+
+pair <- comparisons_DGCR8_214 [[2]]
+
+
+
+compare_group <- pair[1]
+reference_group <- pair[2]
+pair_name <- paste0(compare_group, "_vs_", reference_group)
+
+
+result_folder <- file.path(result_root, pair_name)
+
+
+# Set thresholds dynamically
+if (grepl("DGCR8", compare_group, ignore.case = TRUE)) {
+  thresholds <- c(1.5, 2)
+} else {
+  thresholds <- c(0.5, 1, 1.5)
+}
+
+# Set result folder
+result_folder <- file.path(result_root, pair_name)
+Result_folder_structure(result_folder)
+
+# Filter samples and counts
+filter_sample_info <- condition_list %>% filter(group %in% c(reference_group, compare_group))
+filter_counts <- counts[, rownames(filter_sample_info)]
+
+dds_obj <- DEAnalysis(
+  counts = filter_counts,
+  reference_group = reference_group,
+  compare_group = compare_group,
+  condition_list = filter_sample_info,
+  target_gene = NULL,
+  result_folder = result_folder
+)
+
+vsd_obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+
+# make the color scale
+brewer_palette <- "RdBu"
+ramp <- colorRampPalette( RColorBrewer::brewer.pal(11, brewer_palette))
+mr <- ramp(256)[256:1]
+
+# color map
+unique_groups <- c(reference_group, compare_group)
+color_palette <- c("#10d5da","#fe867f")  # Extend this list if you have more groups
+assigned_colors <- setNames(color_palette[seq_along(unique_groups)], unique_groups)
+annotation_colors_row <- list(group = assigned_colors)
+annotation_col <- as.data.frame(colData(vsd_obj)[, "group", drop = FALSE])
+
+stabilized_counts <- assay(vsd_obj)
+row_variances <- rowVars(stabilized_counts)
+stabilized_counts <- stabilized_counts - rowMeans(stabilized_counts, na.rm=T)
+overlap_genes <- intersect(rownames(stabilized_counts), gene_list)
+stabilized_counts <- stabilized_counts[overlap_genes, rownames(annotation_col)]
+
+
+# turn the row name to gene 
+stabilized_counts_df <- as.data.frame(stabilized_counts) %>%
+  rownames_to_column(var = "gene")
+
+
+target_gene_214_sample <- left_join(
+  target_gene_214,
+  stabilized_counts_df,
+  by ="gene")
+
+# replace the Neuro witg neuro in target_gene_214_sample$term_name
+target_gene_214_sample$term_name <- gsub(
+  "Neuro", "neuro",
+  target_gene_214_sample$term_name
+)
+
+
+ref_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == reference_group)  %>% pull(sample)
+
+comp_samples <- annotation_col %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(group == compare_group)  %>% pull(sample)
+
+
+target_gene_214_sample$ref_mean <- rowMeans(
+  target_gene_214_sample %>%
+    dplyr::select(all_of(ref_samples)),
+)
+target_gene_214_sample$comp_mean <- rowMeans(
+  target_gene_214_sample %>%
+    dplyr::select(all_of(comp_samples)),
+)
+
+
+
+# target_gene_214_sample <- target_gene_214_sample %>%
+#   filter(
+#     ref_mean > comp_mean,
+#   )
+
+
+# # filterout the gene iwth GRIA# and PLEKHG4
+target_gene_214_sample <- target_gene_214_sample %>%
+  filter(
+    !grepl("KLHL31", gene_module)
+  )
+
+
+# 1. Define which columns are your “expression” columns:
+#    (adjust these names if yours differ slightly)
+count_cols <- rownames(annotation_col)
+# 2. Extract a numeric matrix of counts, with genes as rownames
+mat <- target_gene_214_sample %>%
+  dplyr::select(all_of(count_cols)) %>%
+  as.matrix()
+rownames(mat) <- target_gene_214_sample$gene_module
+
+# 3. Build the row‑annotation data frame:
+annotation_row <- data.frame(
+  Module = target_gene_214_sample$term_name
+)
+rownames(annotation_row) <- target_gene_214_sample$gene_module
+
+# 4. Choose a palette for your modules:
+modules <- unique(annotation_row$Module)
+module_colors <- setNames(
+  brewer.pal(min(length(modules), 12), "Set3"),
+  modules
+)
+annotation_colors <- list(
+  Module = module_colors,
+  group = assigned_colors
+)
+
+
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = FALSE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_DGCR8_miRNA_214_target_heatmap.pdf")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_DGCR8_miRNA_214_target_heatmap.png")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+
+# 5. Draw the heatmap:
+p<-pheatmap(
+  mat,
+  scale            = "row",
+  color            = mr,            # your existing palette
+  annotation_row   = annotation_row,
+  annotation_colors= annotation_colors,
+  annotation_col   = annotation_col,
+  cluster_rows     = TRUE,
+  cluster_cols     = FALSE,
+  fontsize_row     = 10,
+  fontsize_col     = 10,
+  treeheight_row   = 0,
+  show_rownames    = TRUE,
+  border_color     = NA
+)
+
+
+# save the result to the result_folder with 06_miRNA target
+
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_DGCR8_miRNA_214_target_heatmap_cluster.pdf")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+ggsave(file.path("rescue_target_gene_module", paste0(pair_name, "_DGCR8_miRNA_214_target_heatmap_cluster.png")),
+       p, width = 8, height = 16, units = "in", dpi = 300)
+
+
+
+
+
+
+
+
+```
+
+
+
+# Session information
+```{r}
+sessionInfo()
+```
+
