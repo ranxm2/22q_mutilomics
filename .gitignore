@@ -6,4 +6,5 @@ DESeq2_normalized_counts.csv
 .Rproj.user
 analysis/**/.RDataTmp
 **.RData
-**.Rhistory*.RDataTmp
+**.Rhistory
+**.RDataTmp
