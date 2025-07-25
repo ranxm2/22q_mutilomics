@@ -1,0 +1,589 @@
+---
+title: "Analysis mutil Group"
+author: "Ximing Ran"
+date: "2025-07-02"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: false
+  html_document:
+    # code_folding: hide
+    toc: true
+    toc_float: true
+hitheme: tomorrow
+highlighter: highlight.js
+
+---
+
+```{r setup, include=FALSE}
+# load libraries
+library(tidyverse)
+library(knitr)
+set.seed(2024)
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+ fig.path = "./rescue_target_gene_module/Analysis_figure",
+  fig.width = 8,
+  fig.height = 6,
+  dpi = 300,
+  cache = FALSE,
+  cache.lazy = FALSE,
+  cache.path = "./cache/rescue_target_gene_module/"
+)
+
+theme_set(theme_bw() + theme(legend.position = "bottom"))
+knitr::kable(head(mtcars[, 1:4]), "simple")
+```
+
+```{r}
+library(tibble)
+library(tidyr)
+library(dplyr)
+library(rtracklayer)
+
+library(dplyr)
+library(pheatmap)
+library(RColorBrewer)
+```
+
+
+
+```{r local_function_load}
+# load function from local files
+source(here::here("source", "DEG_functions.R"))
+source(here::here("source", "miRNA_rescue.R"))
+```
+
+\newpage
+
+# 1. Read the count data
+In this section, we will read the clean count data from the synaptosomes_bulkRNA folder.  We will read the data and merge them into a single table. 
+
+```{r load_bulkRNA_data}
+input_count <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                      "bulkRNA_counts_cleaned.csv"))
+counts <-  as.data.frame(input_count) %>% 
+  column_to_rownames(var = "gene")
+colnames(counts) <- gsub("-", "_", colnames(counts))
+# replacte the first X in the colnames
+colnames(counts) <- gsub("^X", "", colnames(counts))
+
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                      "sample_info.csv")) %>%
+                    mutate(condition = Diagnosis) 
+
+sample_list_raw$Sample.name <- gsub("-", "_", sample_list_raw$Sample.name)
+# Ensure the column names of counts exist in Sample.name
+new_colnames <- sample_list_raw$Sample.ID..[match(colnames(counts), sample_list_raw$Sample.name )]
+
+# Assign new column names
+colnames(counts) <- new_colnames
+
+
+# sort the columns by the colname
+condition_list <- data.frame(
+  group =sample_list_raw$condition
+)
+
+row.names(condition_list) <- sample_list_raw$Sample.ID..
+
+counts<- counts[, rownames(condition_list)]
+
+gene_name_mapping<- readRDS(here::here("data","ref" ,"gene_name_mapping.rds"))
+
+
+```
+
+
+
+```{r DESeq2_analysis}
+# Init the result folder structure for the result
+result_folder_all = './rescue_target_gene_module'
+result_folder = result_folder_all
+
+```
+
+
+# 2. Visualization for reuslt
+
+## (1) Sample information - PCA plot
+
+```{r Sample_PCA, fig.width=8, fig.height=6}
+figure_folder = result_folder
+# do PCA for counts data
+dds_obj <- DESeqDataSetFromMatrix(countData = counts,
+                                  colData = condition_list,
+                                  design = ~ group)
+vsd.obj <- varianceStabilizingTransformation(dds_obj, blind = TRUE)
+pcaData <- plotPCA(vsd.obj,  intgroup = c("group"), returnData = T)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+
+
+p <-ggplot(pcaData, aes(PC1, PC2, color=group)) +
+  geom_point(size=3) +
+  labs(x = paste0("PC1: ",percentVar[1],"% variance"),
+       y = paste0("PC2: ",percentVar[2],"% variance"),
+  ) +
+  stat_ellipse(level = 0.95)+
+  theme_bw() +
+  # theme_classic()+
+  theme(text = element_text(family = "Arial", colour = "black")) +
+  # scale_color_manual(values = assigned_colors) +
+  ggrepel::geom_text_repel(aes(label = name), color = "black")
+
+print(p)
+# ggsave("./results/01-Sample_info/01_sample_PCA_plot.pdf", p,width = 8, height = 6, units = "in", dpi = 300)
+# ggsave("./results/01-Sample_info/01_sample_PCA_plot.png", p,width = 8, height = 6, units = "in", dpi = 300)
+#   
+```
+
+
+
+
+
+
+## (2) Sample information - Distance heatmap
+
+```{r Sample_dis_Heatmap, fig.width=12, fig.height=10}
+ # Now apply variance stabilizing transformation
+ sampleDists <- dist(t(assay(vsd.obj)))
+ sampleDistMatrix <- as.matrix( sampleDists )
+ rownames(sampleDistMatrix) <- paste( vsd.obj$group )
+ colors <- colorRampPalette( rev(RColorBrewer::brewer.pal(9, "Blues")) )(255)
+ p <- pheatmap::pheatmap(sampleDistMatrix,
+                         clustering_distance_rows = sampleDists,
+                         clustering_distance_cols = sampleDists,
+                         col = colors) 
+print(p)
+
+#  ggsave("./results/01-Sample_info/02_sample_distance_heatmap.pdf", p,width = 8, height = 6, units = "in", dpi = 300)
+# ggsave("./results/01-Sample_info/02_sample_distance_heatmap.png",
+#        p, width = 8, height = 6, units = "in", dpi = 300)
+
+```
+
+
+```{r}
+library(pheatmap)
+# Define group comparisons
+comparisons <- list(
+  c("22q001-185-OE", "22q001"),
+  c("22q002-185-OE", "22q002"),
+  c("22q002-128-OE", "22q002"),
+  c("004-214-OE", "004"),
+  c("007-214-OE", "007"),
+  c("004-185-KD", "004"),
+  c("007-185-KD", "007"),
+  c("004-128-KD", "004"),
+  c("007-128-KD", "007"),
+  c("22q001-214-KD", "22q001"),
+  c("22q002-214-KD", "22q002"),
+  c("22q001-DGCR8-OE", "22q001"),
+  c("22q002-DGCR8-OE", "22q002")
+)  
+
+padj_to_stars <- function(p) {
+    if (is.na(p)) return("") # handle NA
+    if (p < 0.001) return(" (***)")
+    else if (p < 0.01) return(" (**)")
+    else if (p < 0.05) return(" (*)")
+    else return("")
+}
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                      "sample_info.csv")) %>%
+                    mutate(condition = Diagnosis, 
+                           sample_name = gsub("-", "_", Sample.ID..),
+                           group = Diagnosis)
+rownames(sample_list_raw) <- sample_list_raw$Sample.ID..
+
+
+```
+\newpage
+
+# miRNA 214
+## Sample 004
+```{r}
+target_gene_214 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                      "hsa-miR-214-3p_up_enrichment_GO_BP.csv"), stringsAsFactors = FALSE, row.names = 1)
+
+target_gene_214 <- target_gene_214 %>%
+  rename(gene_module = gene,
+         gene = intersection_gene)
+
+comparisons_214 <- list(
+  c("004-214-OE", "004"),
+  c("007-214-OE", "007"),
+  c("22q001-214-KD", "22q001"),
+  c("22q002-214-KD", "22q002")
+)
+
+
+
+
+```
+
+
+
+```{r miRNA_plot_214_sample_004, fig.width=8, fig.height=16}
+pair <- comparisons_214 [[1]]
+make_miRNA_target_heatmap(pair= pair, 
+                          target_gene_df = target_gene_214, 
+                          counts = counts, 
+                          sample_list_raw = sample_list_raw,
+                          delete_patterns = c("^GRIA", "^PLEKHG4"),
+                          result_folder = 'rescue_target_gene_module',
+                          width  = 8, height = 10
+                          ) 
+```
+
+## Sample 007
+```{r miRNA_plot_214_sample_007, fig.width=8, fig.height=16}
+pair <- comparisons_214 [[2]]
+make_miRNA_target_heatmap(pair= pair, 
+                          target_gene_df = target_gene_214, 
+                          counts = counts, 
+                          sample_list_raw = sample_list_raw,
+                          delete_patterns = NULL,
+                          result_folder = 'rescue_target_gene_module',
+                          width  = 8, 
+                          height = 12
+                          ) 
+```
+
+## Sample 001
+```{r miRNA_plot_214_sample_001, fig.width=8, fig.height=16}
+pair <- comparisons_214 [[3]]
+make_miRNA_target_heatmap(pair= pair, 
+                          target_gene_df = target_gene_214, 
+                          counts = counts, 
+                          sample_list_raw = sample_list_raw,
+                          delete_patterns = NULL,
+                          result_folder = 'rescue_target_gene_module',
+                          width  = 8, height = 10
+                          ) 
+```
+
+## Sample 002
+```{r miRNA_plot_214_sample_002, fig.width=8, fig.height=16}
+pair <- comparisons_214 [[4]]
+make_miRNA_target_heatmap(pair= pair, 
+                          target_gene_df = target_gene_214, 
+                          counts = counts, 
+                          sample_list_raw = sample_list_raw,
+                          delete_patterns = c("PLPPR4"),
+                          result_folder = 'rescue_target_gene_module',
+                          width  = 8, height = 7
+                          ) 
+
+```
+
+
+\newpage
+
+# miRNA 128
+
+```{r}
+target_gene_128 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                       "hsa-miR-128-3p_down_enrichment_GO_BP.csv"), stringsAsFactors = FALSE)
+# rename the gene to gene_module, the intersection_gene is the gene name
+target_gene_df <- target_gene_128 %>%
+  rename(gene_module = gene,
+         gene = intersection_gene)
+
+comparisons_128 <- list(
+  c("22q002-128-OE", "22q002"),
+  c("004-128-KD", "004"),
+  c("007-128-KD", "007")
+)  
+```
+
+## Sample 002
+
+```{r miRNA_plot_128_002, fig.width=8, fig.height=16}
+pair <- comparisons_128 [[1]]
+make_miRNA_target_heatmap(pair= pair, 
+                          target_gene_df = target_gene_df, 
+                          counts = counts, 
+                          sample_list_raw = sample_list_raw,
+                          delete_patterns = c("^FOXC1"),
+                          result_folder = 'rescue_target_gene_module',
+                          width  = 8, 
+                          height = 16
+                          ) 
+```
+
+## Sample 004
+```{r miRNA_plot_128_004, fig.width=8, fig.height=16}
+pair <- comparisons_128 [[2]]
+make_miRNA_target_heatmap(pair= pair, 
+                          target_gene_df = target_gene_df, 
+                          counts = counts, 
+                          sample_list_raw = sample_list_raw,
+                          delete_patterns = c("^TEAD4"),
+                          result_folder = 'rescue_target_gene_module',
+                          width  = 8, height = 12
+                          ) 
+
+```
+
+
+## Sample 007
+```{r miRNA_plot_128_007, fig.width=8, fig.height=16}
+pair <- comparisons_128 [[3]]
+make_miRNA_target_heatmap(pair= pair, 
+                          target_gene_df = target_gene_df, 
+                          counts = counts, 
+                          sample_list_raw = sample_list_raw,
+                          delete_patterns = c("^EPAS1","^RUNX1"),
+                          result_folder = 'rescue_target_gene_module',
+                          width  = 8, height = 10
+                          ) 
+```
+
+\newpage
+
+# miRNA 185
+```{r}
+target_gene_185 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                       "hsa-miR-185-5p_down_enrichment_GO_BP.csv"), stringsAsFactors = FALSE)
+
+# rename the gene to gene_module, the intersection_gene is the gene name
+target_gene_df <- target_gene_185 %>%
+  rename(gene_module = gene,
+         gene = intersection_gene)
+
+comparisons_185 <- list(
+  c("22q001-185-OE", "22q001"),
+  c("22q002-185-OE", "22q002"),
+  c("004-185-KD", "004"),
+  c("007-185-KD", "007")
+)  
+```
+
+## Sample 001
+
+```{r miRNA_plot_185_001, fig.width=8, fig.height=16}
+pair <- comparisons_185 [[1]]
+make_miRNA_target_heatmap(pair= pair, 
+                          target_gene_df = target_gene_df, 
+                          counts = counts, 
+                          sample_list_raw = sample_list_raw,
+                          delete_patterns = c("^PCDHGA8"),
+                          result_folder = 'rescue_target_gene_module',
+                          width  = 8, height = 18
+                          ) 
+```
+
+## Sample 002
+```{r miRNA_plot_185_002, fig.width=8, fig.height=16}
+pair <- comparisons_185 [[2]]
+make_miRNA_target_heatmap(pair= pair, 
+                          target_gene_df = target_gene_df, 
+                          counts = counts, 
+                          sample_list_raw = sample_list_raw,
+                          delete_patterns = c("SOX13","ERBB3","LDLRAP1"),
+                          result_folder = 'rescue_target_gene_module',
+                          width  = 8, height = 20
+                          ) 
+```
+
+## Sample 004
+```{r miRNA_plot_185_004, fig.width=8, fig.height=16}
+pair <- comparisons_185 [[3]]
+make_miRNA_target_heatmap(pair= pair, 
+                          target_gene_df = target_gene_df, 
+                          counts = counts, 
+                          sample_list_raw = sample_list_raw,
+                          delete_patterns = c("PCDHGB4"),
+                          result_folder = 'rescue_target_gene_module',
+                          width  = 8, height = 20
+                          ) 
+```
+
+## Sample 007
+```{r miRNA_plot_185_007, fig.width=8, fig.height=16}
+pair <- comparisons_185 [[4]]
+make_miRNA_target_heatmap(pair= pair, 
+                          target_gene_df = target_gene_df, 
+                          counts = counts, 
+                          sample_list_raw = sample_list_raw,
+                          delete_patterns = c("PDE3A", "PITX1", "FN1", "CREB3L2", "ETS1", 
+                                              "PCDHGB3", "TGFBR2", "LDLRAP1", "PCDH18","IL32",
+                                              "NR2F2"),
+                          result_folder = 'rescue_target_gene_module',
+                          width  = 8, height = 16
+                          ) 
+
+```
+
+
+\newpage
+# DGCR8
+
+## miRNA 128
+```{r}
+target_gene_128 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                       "hsa-miR-128-3p_down_enrichment_GO_BP.csv"), stringsAsFactors = FALSE)
+# rename the gene to gene_module, the intersection_gene is the gene name
+target_gene_df <- target_gene_128 %>%
+  rename(gene_module = gene,
+         gene = intersection_gene)
+
+comparisons_DGCR8_128 <- list(
+  c("22q001-DGCR8-OE", "22q001"),
+  c("22q002-DGCR8-OE", "22q002")
+)  
+```
+
+### Sample 001
+```{r miRNA_plot_DGCR8_128_001, fig.width=8, fig.height=16}
+pair <- comparisons_DGCR8_128 [[1]]
+make_miRNA_target_heatmap(pair= pair, 
+                          target_gene_df = target_gene_df, 
+                          suffix = "_DGCR8_128",
+                          filter_mean = TRUE,
+                          counts = counts, 
+                          sample_list_raw = sample_list_raw,
+                          delete_patterns = c("FOXC1"),
+                          result_folder = 'rescue_target_gene_module',
+                          width  = 8, height = 16
+                          ) 
+
+```
+
+### Sample 002
+```{r miRNA_plot_DGCR8_128_002, fig.width=8, fig.height=16}
+pair <- comparisons_DGCR8_128 [[2]]
+make_miRNA_target_heatmap(pair= pair, 
+                          target_gene_df = target_gene_df, 
+                          suffix = "_DGCR8_128",
+                          filter_mean = TRUE,
+                          counts = counts, 
+                          sample_list_raw = sample_list_raw,
+                          delete_patterns = c("KLHL31","AJUBA"),
+                          result_folder = 'rescue_target_gene_module',
+                          width  = 8, height = 16
+                          ) 
+```
+
+
+
+## miRNA 185
+
+```{r}
+target_gene_185 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                       "hsa-miR-185-5p_down_enrichment_GO_BP.csv"), stringsAsFactors = FALSE)
+
+# rename the gene to gene_module, the intersection_gene is the gene name
+target_gene_df <- target_gene_185 %>%
+  rename(gene_module = gene,
+         gene = intersection_gene)
+
+gene_list <- unique(target_gene_185$gene) 
+
+comparisons_DGCR8_185 <- list(
+  c("22q001-DGCR8-OE", "22q001"),
+  c("22q002-DGCR8-OE", "22q002")
+)  
+```
+
+### Sample 001
+```{r miRNA_plot_DGCR8_185_001, fig.width=8, fig.height=16}
+pair <- comparisons_DGCR8_185 [[1]]
+make_miRNA_target_heatmap(pair= pair, 
+                          target_gene_df = target_gene_df, 
+                          suffix = "_DGCR8_185",
+                          filter_mean = TRUE,
+                          counts = counts, 
+                          sample_list_raw = sample_list_raw,
+                          delete_patterns = c("DAB2"),
+                          result_folder = 'rescue_target_gene_module',
+                          width  = 8, height = 16
+                          ) 
+```
+
+
+### Sample 002
+
+```{r miRNA_plot_DGCR8_185_002, fig.width=8, fig.height=16}
+pair <- comparisons_DGCR8_185 [[2]]
+make_miRNA_target_heatmap(pair= pair, 
+                          target_gene_df = target_gene_df, 
+                          suffix = "_DGCR8_185",
+                          filter_mean = TRUE,
+                          counts = counts, 
+                          sample_list_raw = sample_list_raw,
+                          delete_patterns = c("KLHL31"),
+                          result_folder = 'rescue_target_gene_module',
+                          width  = 8, height = 16
+                          ) 
+
+```
+
+\newpage
+## miRNA 214
+```{r}
+target_gene_214 <- read.csv(here::here("data", "neuron_bulkRNA_rescue", "miRNA_target",
+                                       "hsa-miR-214-3p_up_enrichment_GO_BP.csv"), stringsAsFactors = FALSE, row.names = 1)
+
+# rename the gene to gene_module, the intersection_gene is the gene name
+target_gene_df <- target_gene_214 %>%
+  rename(gene_module = gene,
+         gene = intersection_gene)
+
+
+comparisons_DGCR8_214 <- list(
+  c("22q001-DGCR8-OE", "22q001"),
+  c("22q002-DGCR8-OE", "22q002")
+)  
+```
+
+
+
+### Sample 001
+```{r miRNA_plot_DGCR8_214_001, fig.width=8, fig.height=16}
+pair <- comparisons_DGCR8_214 [[1]]
+make_miRNA_target_heatmap_2_way(pair= pair, 
+                          target_gene_df = target_gene_df, 
+                          suffix = "_DGCR8_214",
+                          filter_mean = FALSE,
+                          counts = counts, 
+                          sample_list_raw = sample_list_raw,
+                          delete_patterns = c("KLHL31"),
+                          result_folder = 'rescue_target_gene_module',
+                          width  = 8, height = 12
+                          ) 
+```
+
+
+### Sample 002
+```{r miRNA_plot_DGCR8_214_002, fig.width=8, fig.height=16}
+pair <- comparisons_DGCR8_214 [[2]]
+make_miRNA_target_heatmap_2_way(pair= pair, 
+                          target_gene_df = target_gene_df, 
+                          suffix = "_DGCR8_214",
+                          filter_mean = FALSE,
+                          counts = counts, 
+                          sample_list_raw = sample_list_raw,
+                          delete_patterns = c("KLHL31"),
+                          result_folder = 'rescue_target_gene_module',
+                          width  = 8, height = 12
+                          ) 
+
+```
+
+
+
+# Session information
+```{r}
+sessionInfo()
+```
+

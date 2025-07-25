@@ -1,0 +1,208 @@
+---
+title: "Plot for GO term with select on different group"
+subtitle: ""
+author: "Ximing Ran"
+date: "2025-07-18"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: false
+  html_document:
+    # code_folding: hide
+    toc: true
+    toc_float: true
+hitheme: tomorrow
+highlighter: highlight.js
+
+---
+
+```{r setup, include=FALSE}
+# load libraries
+library(tidyverse)
+library(knitr)
+set.seed(2024)
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.path = "./results/GO_select/Analysis_figures/"
+)
+
+theme_set(theme_bw() + theme(legend.position = "bottom"))
+knitr::kable(head(mtcars[, 1:4]), "simple")
+```
+
+```{r}
+library(tibble)
+library(tidyr)
+library(dplyr)
+library(rtracklayer)
+```
+
+
+# Load the GO data
+
+```{r}
+# install.packages("readxl")  # if you haven't already
+# install.packages("fs"); install.packages("readxl")
+library(fs)
+library(readxl)
+
+# fs::dir_ls() will recurse by default when recurse = TRUE
+xlsx_files <- dir_ls(
+  path    = "results/DEG-comparisons",
+  recurse = TRUE, 
+  glob    = "*_WN*.xlsx"        # glob pattern: any file with "_WN" then ".xlsx"
+)
+
+```
+
+
+```{r}
+# if you haven’t yet, install.stringr for convenient regex
+# install.packages("stringr")  
+library(stringr)
+
+# 2. make sure the destination exists
+out_dir <- "results/GO_select/data"
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
+
+# 3. copy + rename
+for (f in xlsx_files) {
+  # extract the comparison name (the folder right under DEG‑comparisons)
+  # e.g. "22q002-DGCR8-OE_vs_22q002"
+  comp <- str_match(f, "results/DEG-comparisons/([^/]+)/")[,2]
+  
+  # original filename
+  base <- basename(f)
+  
+  # new name: "<comp>_<orig>"
+  new_name <- paste0(comp, "_", base)
+  
+  # full destination path
+  dest <- file.path(out_dir, new_name)
+  
+  file.copy(from = f, to = dest, overwrite = TRUE)
+}
+
+# Check
+list.files(out_dir)
+
+```
+```{r}
+# install.packages("readxl")  # if needed
+library(readxl)
+
+# 1. point to your directory
+in_dir <- "results/GO_select/data"
+
+# 2. list all .xlsx files
+files <- list.files(
+  path       = in_dir,
+  pattern    = "\\.xlsx$",
+  full.names = TRUE
+)
+
+# 3. read “Sheet1” from each
+sheet1_list <- lapply(files, function(f) {
+  read_excel(f, sheet = "Sheet1")
+})
+
+# 4. name each element by its file
+names(sheet1_list) <- basename(files)
+
+# now, e.g.
+# sheet1_list[["22q002-DGCR8-OE_vs_22q002_DEG_1.5_up_GO_BP_WN.xlsx"]]
+#   contains the Sheet1 data for that workbook
+
+```
+
+```{r}
+#— PREAMBLE —#
+# install.packages(c("ggplot2","readxl"))  # if needed
+library(ggplot2)
+library(extrafont)
+
+# wherever you want your plots to go:
+result_folder <- "results/GO_select/plots"
+if (!dir.exists(result_folder)) dir.create(result_folder, recursive = TRUE)
+
+# assume sheet1_list already exists and is named by the xlsx file,
+# e.g. names(sheet1_list) == 
+#   "004-128-KD_vs_004_DEG_1.0_down_GO_BP_WN.xlsx", etc.
+
+#— LOOP & PLOT —#
+for (fname in names(sheet1_list)) {
+  
+  df <- sheet1_list[[fname]]
+  
+  df <- df %>%
+    dplyr::select(term_name, p_value) %>%
+    arrange(p_value) %>% 
+    mutate(term_name = make.unique(term_name)) %>%
+    mutate(term_name = factor(term_name, levels = rev(term_name)))  
+  
+  # if you only want top‑30 by p_value, uncomment:
+  # df <- df[order(df$p_value), ]
+  # if (nrow(df) > 30) df <- df[1:30, ]
+  
+  # derive Up/Down flag
+  flag <- if (grepl("_up_",   fname, ignore.case = TRUE)) "Up"
+          else if (grepl("_down_", fname, ignore.case = TRUE)) "Down"
+          else NA_character_
+  
+  # build the plot
+  p <- ggplot(df, aes(x = term_name, y = -log10(p_value), fill = -log10(p_value))) +
+    geom_bar(stat = "identity", show.legend = TRUE) +
+    ( if (flag == "Up") {
+        scale_fill_gradient(high = "#a50f15", low  = "#fc9272")
+      } else if (flag == "Down") {
+        scale_fill_gradient(low  = "#56B1F7", high = "#132B43")
+      } else {
+        scale_fill_manual(values = rep("lightblue", nrow(df)))
+      }
+    ) +
+    ylab("-log10(FDR)") +
+    xlab("") +
+    # ggtitle(paste0(fname, " — Top pathways")) +
+    coord_flip() +
+    theme_classic(base_size = 14) +
+    theme(
+      text        = element_text(family = "Arial", size = 14, colour = "black"),
+      axis.title  = element_text(colour = "black"),
+      axis.text   = element_text(colour = "black"),
+      legend.position = "none",
+      plot.title  = element_text(face = "bold", hjust = 0.5),
+      panel.background = element_rect(fill = "transparent", color = NA),  # Transparent panel background
+      plot.background = element_rect(fill = "transparent", color = NA)    # Transparent plot background
+    ) +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black")
+  
+  # derive a clean base name for saving
+  base <- tools::file_path_sans_ext(fname)
+  
+  # save both PNG and PDF
+  ggsave(
+    filename = file.path(result_folder, paste0(base, "_GOBP.png")),
+    plot     = p,
+    width    = 8, height = 4, units = "in", dpi = 300
+  )
+  ggsave(
+    filename = file.path(result_folder, paste0(base, "_GOBP.pdf")),
+    plot     = p,
+    width    = 8, height = 4, units = "in"
+  )
+}
+
+```
+
+
+
+\newpage
+# Session information
+```{r}
+sessionInfo()
+```
+

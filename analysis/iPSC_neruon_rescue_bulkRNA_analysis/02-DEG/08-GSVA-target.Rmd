@@ -1,0 +1,235 @@
+---
+title: "Analysis mutil Group"
+author: "Ximing Ran"
+date: "2025-07-24"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: false
+  html_document:
+    # code_folding: hide
+    toc: true
+    toc_float: true
+hitheme: tomorrow
+highlighter: highlight.js
+
+---
+
+```{r setup, include=FALSE}
+# load libraries
+library(tidyverse)
+library(knitr)
+set.seed(2024)
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.path = "./results/08-GSVA-group/Analysis_figure/"
+)
+
+theme_set(theme_bw() + theme(legend.position = "bottom"))
+knitr::kable(head(mtcars[, 1:4]), "simple")
+```
+
+```{r}
+library(tibble)
+library(tidyr)
+library(dplyr)
+library(rtracklayer)
+```
+
+
+```{r local_function_load}
+# load function from local files
+# source(here::here("source", "DEG_functions.R"))
+```
+
+\newpage
+# Plot the pathway GSVA
+```{r}
+library(ggsignif)
+plot_gsva_boxplot<-  function(gsva_matrix, condition_list_label, pathway_name,
+                              figure_folder, file_name, 
+                              fig.height = 6, fig.width = 4,
+                              save = TRUE,
+                              reference_group, compare_group){
+  
+  # Sample list sub
+  sample_info <- condition_list_label %>%
+    mutate(sample = rownames(.)) %>%
+    filter(group %in% c(reference_group, compare_group))
+  
+  # Convert gsva_matrix to a data frame and reshape
+  plot_df <- as.data.frame(gsva_matrix) %>%
+    rownames_to_column(var = "pathway") %>%
+    filter(pathway == pathway_name) %>%  # Select the specific pathway
+    pivot_longer(cols = -pathway, names_to = "sample", values_to = "GSVA_score") %>%
+    dplyr::select(-pathway)  %>% 
+    filter(sample %in% sample_info$sample)  %>%
+    left_join(sample_info, by = "sample")   %>% 
+    mutate(group = factor(group, levels = c(reference_group, compare_group)))  # Define the factor levels
+  
+  
+  # Ensure colors are mapped to exact group names
+  color_palette <- setNames(c("#10d5da", "#fe867f"), c(reference_group, compare_group))
+  
+  # Process pathway name: remove first part, capitalize first letter, replace underscores with spaces
+  formatted_title <- pathway_name %>%
+    str_remove("^[^_]+_") %>%  # Remove everything before the first underscore
+    str_to_lower() %>%  # Convert everything to lowercase
+    str_replace_all("_", " ") %>%  # Replace underscores with spaces
+    str_to_sentence()  # Capitalize first letter
+  
+  # sub the rna with RNA in formatted_title
+  formatted_title <- str_replace_all(formatted_title, "rna", "RNA")
+  rng   <- range(plot_df$GSVA_score, na.rm = TRUE)
+  span  <- diff(rng)
+  
+  # add 10% padding on each side
+  pad   <- span * 0.10
+  lower_lim <- rng[1] - pad
+  upper_lim <- rng[2] + pad
+  
+    
+  # Create the box plot with scatter overlay
+  p<-ggplot(plot_df, aes(x = group, y = GSVA_score)) +
+    geom_boxplot(aes(fill = group), alpha = 0.9, outlier.shape = NA, color = "black") +  # Box plot with fill color
+    geom_jitter(aes(fill = group), shape = 21, width = 0.2, size = 3, alpha = 0.9, color = "black") +  # Scatter points with fill color
+    # stat_summary(fun = mean, geom = "point", shape = 18, size = 4, color = "black") +  # Mean point
+    geom_signif(comparisons = list(c(reference_group, compare_group)), 
+                test = "t.test", 
+                map_signif_level = TRUE,
+    textsize       = 8     ) +  # Add significance annotation
+    scale_fill_manual(values = color_palette) +  # Apply custom colors to boxes & scatter dots
+    theme_classic(base_family = "Arial") +  # Use Arial font for all text
+  coord_cartesian(ylim = c(lower_lim, upper_lim)) +
+    labs(
+         x = "",  # Remove x-axis label
+         y = formatted_title) +
+    theme(text = element_text(size = 14, family = "Arial"),  # Ensure all text uses Arial
+          plot.title = element_text(hjust = 0.5, size = 14),  # Center title
+          axis.text.x = element_text(size = 16, color = "black"),  # Increase x-axis text size and set color to black
+          axis.text.y = element_text(size = 14, color = "black"),  # Set y-axis text color to black
+          axis.title.x = element_text(size = 14, color = "black"),  # Set x-axis title color to black
+          axis.title.y = element_text(size = 14, color = "black"),  # Set y-axis title color to black
+      panel.background = element_rect(fill = "transparent", color = NA),  # Transparent panel background
+      plot.background = element_rect(fill = "transparent", color = NA) ,   # Transparent plot background
+          legend.position = "none")  + theme(
+    plot.margin = margin(1, 1, 1, 1, unit = "cm")
+  ) +
+
+  
+  
+  if (!dir.exists(figure_folder)) {
+    dir.create(figure_folder, recursive = TRUE)
+  }
+  
+  # if save is TRUE, save the plot
+  if (save){
+    
+    ggsave(file.path(figure_folder, paste0(file_name, ".png")), p,
+           width = fig.width, height = fig.height, units = "in", dpi = 300)
+    ggsave(file.path(figure_folder, paste0(file_name, ".pdf")), p,
+           width = fig.width, height = fig.height, units = "in")
+  }
+  
+  return(p)
+  
+}
+
+    
+```
+
+
+```{r GSVA_pathway_plot, fig.width=3, fig.height=5}
+
+# Define group comparisons
+comparisons <- list(
+  c("004-185-KD", "004"),
+  c("004-128-KD", "004")
+)
+grou_name_list <- unlist(comparisons)
+
+# Paths
+result_root <- "./results/DEG-comparisons"
+dir.create(result_root, showWarnings = FALSE)
+
+# raw sample list
+sample_list_raw <- read.csv(here::here("data", "neuron_bulkRNA_rescue", 
+                                      "sample_info.csv")) %>%
+                    mutate(condition = Diagnosis, 
+                           sample_name = gsub("-", "_", Sample.ID..),
+                           group = Diagnosis)
+sample_list_raw <- sample_list_raw %>% filter(group %in% grou_name_list) %>%
+  dplyr::select(sample_name, group) %>%
+  column_to_rownames("sample_name")
+
+ #sub the 004 in the sample_list_raw$group with CTRL
+sample_list_raw$group <- gsub("004", "CTRL", sample_list_raw$group)
+
+
+
+pair <- comparisons[[1]]
+
+
+# Loop over comparisons
+for (pair in comparisons) {
+  compare_group <- pair[1]
+  reference_group <- pair[2]
+  # gsub the 004 with CTRL
+
+  pair_name <- paste0(compare_group, "_vs_", reference_group)
+  compare_group <- gsub("004", "CTRL", compare_group)
+  reference_group <- gsub("004", "CTRL", reference_group)
+  cat("Processing:", pair_name, "\n")
+  
+  result_folder <- file.path(result_root, pair_name)
+  gsva_matrix<- read.csv(file.path(result_folder, "04-GSVA", "GSVA_matrix.csv"), stringsAsFactors = FALSE, row.names = 1)
+  
+  colnames(gsva_matrix) <- gsub("\\.", "_", colnames(gsva_matrix))
+  colnames(gsva_matrix) <- gsub("^X", "", colnames(gsva_matrix))
+  
+  sample_info <- sample_list_raw %>%
+    filter(group %in% c(reference_group, compare_group)) %>%
+    dplyr::select(sample_name, group) %>%
+    column_to_rownames("sample_name")
+
+  # Ensure sample_info matches the columns of gsva_matrix
+  # load the focused_pathway.csv
+  pathway_list <- read.csv(file.path(result_folder, "04-GSVA", "focused_pathway.csv"), stringsAsFactors = FALSE)
+    
+  # plot for the focus pathway
+  for (i in 1:length(pathway_list$pathway)) {
+    pathway_name <- pathway_list$pathway[i]
+    print(pathway_name)
+  
+    plot_gsva_boxplot(gsva_matrix, 
+                              condition_list_label =sample_info,
+                              pathway_name =  pathway_name,
+                              figure_folder = file.path(result_folder,"04-GSVA","Boxplot-focused"),
+                              file_name = paste0("GSVA_", pathway_name),
+                              fig.height = 6, fig.width = 4,
+                              save = TRUE,
+                              reference_group = reference_group,
+                              compare_group = compare_group)
+    
+  }
+
+  cat("Finished:", pair_name, "\n\n")
+}
+
+
+
+
+
+```
+
+\newpage
+
+# Session information
+```{r}
+sessionInfo()
+```
+
